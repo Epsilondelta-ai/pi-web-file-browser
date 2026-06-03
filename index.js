@@ -287,6 +287,9 @@ function rowNode(node, state, depth, expanded) {
   row.className = ["tree-node", isDir ? "dir" : "file", status, state.selectedPath === path ? "selected" : ""]
     .filter(Boolean)
     .join(" ");
+  row.dataset.fileBrowserAction = isDir ? "toggle" : "open";
+  row.dataset.path = path;
+  row.dataset.depth = String(depth);
   row.style.paddingLeft = `${8 + depth * 14}px`;
   const main = document.createElement("button");
   main.type = "button";
