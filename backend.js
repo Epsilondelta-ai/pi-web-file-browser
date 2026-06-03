@@ -1,18 +1,15 @@
-import { existsSync, statSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
 const dir = dirname(fileURLToPath(import.meta.url));
-const source = join(dir, "backend.go");
-const binary = join(dir, ".pi-web-backend-bin");
+const binary = resolveBinary();
 
-if (needsBuild()) {
-  const build = spawnSync("go", ["build", "-o", binary, source], { encoding: "utf8" });
-  if (build.status !== 0) {
-    process.stderr.write(build.stderr || build.stdout || "go build failed");
-    process.exit(build.status || 1);
-  }
+if (!existsSync(binary)) {
+  process.stderr.write(`Unsupported platform or missing backend binary: ${process.platform}/${process.arch}\n`);
+  process.stderr.write(`Expected binary at: ${binary}\n`);
+  process.exit(1);
 }
 
 const run = spawnSync(binary, process.argv.slice(2), {
@@ -25,9 +22,11 @@ process.stdout.write(run.stdout || "");
 process.stderr.write(run.stderr || "");
 process.exit(run.status || 0);
 
-function needsBuild() {
-  if (!existsSync(binary)) return true;
-  return statSync(binary).mtimeMs < statSync(source).mtimeMs;
+function resolveBinary() {
+  const os = { darwin: "darwin", linux: "linux" }[process.platform];
+  const arch = { x64: "amd64", arm64: "arm64" }[process.arch];
+  if (!os || !arch) return join(dir, "bin", "unsupported", "pi-web-file-browser-backend");
+  return join(dir, "bin", `${os}-${arch}`, "pi-web-file-browser-backend");
 }
 
 async function readStdin() {
