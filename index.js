@@ -95,12 +95,9 @@ async function refresh(context, state, panel, selectedPath = "") {
 
   setTree(panel, '<div class="tree-empty">loading files…</div>');
   try {
-    const [filesResult, gitResult] = await Promise.all([
-      context.api.get(`/api/workspaces/${encodeURIComponent(workspaceId)}/files`),
-      context.api.get(`/api/workspaces/${encodeURIComponent(workspaceId)}/git/status`).catch(() => ({ files: {} })),
-    ]);
-    state.files = filesResult.files || [];
-    state.statusMap = gitResult.files || {};
+    const result = await context.backend("list", { workspaceId, data: {} });
+    state.files = result.files || [];
+    state.statusMap = result.statusMap || {};
     state.selectedPath = selectedPath || state.selectedPath;
     context.app.workspaceFiles = state.files;
     context.app.workspaceFileStatuses = state.statusMap;
@@ -154,11 +151,7 @@ async function createFile(context, state, panel) {
   const workspaceId = context.app.dataset.activeWorkspaceId;
   const path = window.prompt("New file path", "untitled.txt");
   if (!workspaceId || !path) return;
-  await fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}/files/create`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path, kind: "file", content: "" }),
-  });
+  await context.backend("create", { workspaceId, data: { path, content: "" } });
   await refresh(context, state, panel, path);
 }
 

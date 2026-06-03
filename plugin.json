@@ -1,6 +1,7 @@
 {
   "id": "pi-web-file-browser",
   "name": "File Browser",
-  "version": "0.1.1",
-  "entry": "index.js"
+  "version": "0.2.0",
+  "entry": "index.js",
+  "backend": "backend.js"
 }
