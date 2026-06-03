@@ -76,6 +76,16 @@ function createStyle() {
     ".pi-file-browser-panel [data-file-browser-tree] { overflow-y: auto; overflow-x: hidden; }",
     ".pi-file-browser-panel .tree-node { grid-template-columns: 18px 1fr auto; }",
     ".pi-file-browser-panel .file-icon img { width: 16px; height: 16px; display: block; }",
+    ".pi-file-editor-modal[hidden] { display: none; }",
+    ".pi-file-editor-modal { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; background: rgba(0,0,0,.42); }",
+    ".pi-file-editor-dialog { width: min(980px, calc(100vw - 32px)); height: min(760px, calc(100vh - 32px)); display: grid; grid-template-rows: auto 1fr; background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius-2); overflow: hidden; box-shadow: 0 24px 80px rgba(0,0,0,.5); }",
+    ".pi-file-editor-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-bottom: 1px solid var(--border-dim); }",
+    ".pi-file-editor-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }",
+    ".pi-file-editor-actions { display: inline-flex; align-items: center; gap: 8px; }",
+    ".pi-file-editor-actions button { border: 1px solid var(--border); background: var(--bg-1); color: var(--fg-1); border-radius: var(--radius-1); padding: 5px 9px; font: inherit; }",
+    ".pi-file-editor-body { min-height: 0; display: grid; }",
+    ".pi-file-editor-textarea { width: 100%; height: 100%; resize: none; border: 0; outline: none; background: var(--bg-1); color: var(--fg-0); font: 13px/1.55 var(--font-mono); padding: 14px; tab-size: 2; }",
+    ".pi-file-editor-status { color: var(--fg-3); font-size: var(--text-xs); }",
   ].join("\n");
   return style;
 }
@@ -268,11 +278,118 @@ function handleAction(context, state, panel, target) {
   if (action === "open") {
     state.selectedPath = path;
     renderTree(panel, state);
-    window.dispatchEvent(new CustomEvent("pi-workspace-file:open", { detail: { path } }));
+    void openEditor(context, path);
     return undefined;
   }
   if (action === "new-file") return createFile(context, state, panel);
   return undefined;
+}
+
+async function openEditor(context, path) {
+  const workspaceId = context.app.dataset.activeWorkspaceId;
+  if (!workspaceId || !path) return;
+  const editor = ensureEditor(context.app);
+  editor.fileBrowserContext = context;
+  const title = editor.querySelector("[data-file-editor-title]");
+  const status = editor.querySelector("[data-file-editor-status]");
+  const textarea = editor.querySelector("[data-file-editor-textarea]");
+  const save = editor.querySelector("[data-file-editor-save]");
+  editor.dataset.workspaceId = workspaceId;
+  editor.dataset.path = path;
+  editor.dataset.cleanContent = "";
+  title.textContent = path;
+  status.textContent = "loading…";
+  textarea.value = "";
+  textarea.disabled = true;
+  save.disabled = true;
+  editor.hidden = false;
+  try {
+    const file = await context.backend("read", { workspaceId, data: { path } });
+    if (editor.dataset.workspaceId !== workspaceId || editor.dataset.path !== path) return;
+    editor.dataset.cleanContent = file.content || "";
+    textarea.value = file.content || "";
+    textarea.disabled = false;
+    save.disabled = true;
+    status.textContent = `${file.mime || "text/plain"} · ${file.size || 0} bytes`;
+    textarea.focus();
+  } catch (error) {
+    status.textContent = error.message || "file unavailable";
+  }
+}
+
+function ensureEditor(app) {
+  let editor = app.querySelector("[data-file-editor-modal]");
+  if (editor) return editor;
+  editor = document.createElement("div");
+  editor.className = "pi-file-editor-modal";
+  editor.dataset.fileEditorModal = "";
+  editor.hidden = true;
+  const dialog = document.createElement("div");
+  dialog.className = "pi-file-editor-dialog";
+  const head = document.createElement("div");
+  head.className = "pi-file-editor-head";
+  const title = document.createElement("strong");
+  title.className = "pi-file-editor-title";
+  title.dataset.fileEditorTitle = "";
+  const actions = document.createElement("span");
+  actions.className = "pi-file-editor-actions";
+  const status = document.createElement("span");
+  status.className = "pi-file-editor-status";
+  status.dataset.fileEditorStatus = "";
+  const save = document.createElement("button");
+  save.type = "button";
+  save.dataset.fileEditorSave = "";
+  save.textContent = "save";
+  save.disabled = true;
+  const close = document.createElement("button");
+  close.type = "button";
+  close.dataset.fileEditorClose = "";
+  close.textContent = "close";
+  actions.append(status, save, close);
+  head.append(title, actions);
+  const body = document.createElement("div");
+  body.className = "pi-file-editor-body";
+  const textarea = document.createElement("textarea");
+  textarea.className = "pi-file-editor-textarea";
+  textarea.dataset.fileEditorTextarea = "";
+  body.append(textarea);
+  dialog.append(head, body);
+  editor.append(dialog);
+  save.addEventListener("click", () => void saveEditor(app, editor));
+  close.addEventListener("click", () => closeEditor(editor));
+  textarea.addEventListener("input", () => {
+    save.disabled = textarea.value === editor.dataset.cleanContent;
+  });
+  app.append(editor);
+  return editor;
+}
+
+async function saveEditor(app, editor) {
+  const workspaceId = editor.dataset.workspaceId || app.dataset.activeWorkspaceId;
+  const path = editor.dataset.path || "";
+  const textarea = editor.querySelector("[data-file-editor-textarea]");
+  const status = editor.querySelector("[data-file-editor-status]");
+  const save = editor.querySelector("[data-file-editor-save]");
+  const pluginContext = editor.fileBrowserContext;
+  if (!workspaceId || !path || !pluginContext) return;
+  save.disabled = true;
+  status.textContent = "saving…";
+  try {
+    const file = await pluginContext.backend("write", { workspaceId, data: { path, content: textarea.value } });
+    editor.dataset.cleanContent = file.content || textarea.value;
+    textarea.value = file.content || textarea.value;
+    status.textContent = "saved";
+    window.dispatchEvent(new CustomEvent("pi-workspace-tree:refresh", { detail: { selectedPath: path } }));
+  } catch (error) {
+    status.textContent = error.message || "save failed";
+    save.disabled = false;
+  }
+}
+
+function closeEditor(editor) {
+  const textarea = editor.querySelector("[data-file-editor-textarea]");
+  if (textarea.value !== editor.dataset.cleanContent && !window.confirm("Discard unsaved file changes?")) return;
+  editor.hidden = true;
 }
 
 async function createFile(context, state, panel) {

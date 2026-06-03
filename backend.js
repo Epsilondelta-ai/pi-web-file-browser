@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { execFileSync } from "node:child_process";
 
@@ -10,6 +10,8 @@ try {
   if (!root) throw new Error("workspace root is required");
   if (method === "list") respond({ files: listFiles(root), statusMap: gitStatus(root) });
   else if (method === "create") respond({ file: createFile(root, input.path || "", input.content || "") });
+  else if (method === "read") respond(readFile(root, input.path || ""));
+  else if (method === "write") respond(writeFile(root, input.path || "", input.content || ""));
   else throw new Error(`unknown method: ${method}`);
 } catch (error) {
   console.error(error.message || String(error));
@@ -67,6 +69,44 @@ function cleanRel(relPath) {
   const clean = String(relPath).replace(/^\/+/, "");
   if (!clean || clean.includes("..")) throw new Error("invalid file path");
   return clean;
+}
+
+function readFile(rootPath, relPath) {
+  const cleanPath = cleanRel(relPath);
+  const absPath = join(rootPath, cleanPath);
+  const stats = statSync(absPath);
+  if (stats.isDirectory()) throw new Error("cannot open directory");
+  const data = readFileSync(absPath);
+  return {
+    path: slash(cleanPath),
+    content: data.toString("utf8"),
+    size: data.length,
+    mime: mimeType(cleanPath),
+  };
+}
+
+function writeFile(rootPath, relPath, content) {
+  const cleanPath = cleanRel(relPath);
+  writeFileSync(join(rootPath, cleanPath), String(content));
+  return readFile(rootPath, cleanPath);
+}
+
+function mimeType(path) {
+  const ext = path.toLowerCase().split(".").pop() || "";
+  return {
+    css: "text/css",
+    go: "text/x-go",
+    html: "text/html",
+    js: "text/javascript",
+    json: "application/json",
+    jsx: "text/javascript",
+    md: "text/markdown",
+    ts: "text/typescript",
+    tsx: "text/typescript",
+    txt: "text/plain",
+    yaml: "application/yaml",
+    yml: "application/yaml",
+  }[ext] || "text/plain";
 }
 
 function gitStatus(rootPath) {
