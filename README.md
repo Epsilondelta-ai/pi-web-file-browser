@@ -2,6 +2,8 @@
 
 File browser sidebar plugin for pi-web.
 
+Owns the file editor implementation. The browser bundle includes CodeMirror, language support, search, save, and git-change gutter markers.
+
 ## Install
 
 ```sh
@@ -26,3 +28,12 @@ Windows is not supported. Go is only needed when rebuilding the binaries from `b
 ```sh
 ./scripts/build-backends.sh
 ```
+
+## Frontend bundle
+
+```sh
+bun install
+bun run build
+```
+
+`src/index.js` and `src/file-editor.js` are bundled into `index.js` for pi-web to load as the plugin entry.
