@@ -44,9 +44,36 @@ function ensureToolbarButton(app) {
   button.title = "file browser";
   button.hidden = app.dataset.route !== "workspace";
   button.setAttribute("aria-label", "toggle file browser");
-  button.textContent = "📁";
+  button.append(lucideIcon("folder-tree"));
   toolbar.insertBefore(button, toolbar.querySelector(".statusbtn"));
   return button;
+}
+
+function lucideIcon(name, size = 14) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("width", String(size));
+  svg.setAttribute("height", String(size));
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.75");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("aria-hidden", "true");
+  if (name === "folder-tree") {
+    svg.append(svgPath("M20 10a1 1 0 0 0-1-1h-7.2a1 1 0 0 1-.8-.4L9.2 6.4a1 1 0 0 0-.8-.4H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1Z"));
+    svg.append(svgPath("M8 6V4a1 1 0 0 1 1-1h2.2a1 1 0 0 1 .8.4l1.8 2.2a1 1 0 0 0 .8.4H19a1 1 0 0 1 1 1v2"));
+    svg.append(svgPath("M8 19v2"));
+    svg.append(svgPath("M8 21h8"));
+    svg.append(svgPath("M16 19v2"));
+  }
+  return svg;
+}
+
+function svgPath(d) {
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", d);
+  return path;
 }
 
 function syncToolbarButton(app) {
@@ -111,7 +138,7 @@ function createHeader() {
   tabs.className = "tree-tabs";
   const title = document.createElement("span");
   title.className = "tree-tab on";
-  title.textContent = "📁 files";
+  title.append(lucideIcon("folder-tree", 12), document.createTextNode(" files"));
   tabs.append(title);
   const actions = document.createElement("span");
   actions.className = "tree-head-actions";
