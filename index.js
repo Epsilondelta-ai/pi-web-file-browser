@@ -1,9 +1,14 @@
 const PANEL_ID = "file-browser";
 
 export default function activate(context) {
-  ensureToolbarButton(context.app);
   const panel = ensurePanel(context.app);
   const state = { files: [], statusMap: {}, expanded: new Set(), collapsed: new Set(), selectedPath: "", query: "" };
+  ensureToolbarButton(context.app, () => {
+    const isOpen = toggleFileBrowserSidebar(context.app);
+    syncToolbarButton(context.app);
+    if (isOpen) refresh(context, state, panel);
+  });
+  ensureOutsideClose(context.app);
 
   panel.addEventListener("click", (event) => {
     const target = event.target.closest("[data-file-browser-action]");
@@ -17,35 +22,36 @@ export default function activate(context) {
     renderTree(panel, state);
   });
 
-  window.addEventListener("pi-plugin-sidebar:open", (event) => {
-    syncToolbarButton(context.app);
-    if (event.detail?.panel === PANEL_ID) refresh(context, state, panel);
-  });
   window.addEventListener("pi-workspace:active", () => refresh(context, state, panel));
   window.addEventListener("pi-workspace-tree:refresh", (event) => refresh(context, state, panel, event.detail?.selectedPath || ""));
 
-  context.app.syncPluginSidebarPanels?.();
   syncToolbarButton(context.app);
   refresh(context, state, panel);
 }
 
-function ensureToolbarButton(app) {
+function ensureToolbarButton(app, onToggle) {
   const toolbar = app.querySelector("[data-plugin-toolbar]") || app.querySelector(".topbar .actions");
   if (!toolbar) return undefined;
-  const existing = toolbar.querySelector(`[data-plugin-toolbar-button="${PANEL_ID}"]`);
-  if (existing) return existing;
-
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "iconbtn workspace-explorer-btn";
-  button.dataset.action = "toggle-plugin-sidebar";
-  button.dataset.pluginPanel = PANEL_ID;
-  button.dataset.pluginToolbarButton = PANEL_ID;
-  button.title = "file browser";
-  button.hidden = app.dataset.route !== "workspace";
-  button.setAttribute("aria-label", "toggle file browser");
-  button.append(materialThemeIcon("folder"));
-  toolbar.insertBefore(button, toolbar.querySelector(".statusbtn"));
+  let button = toolbar.querySelector(`[data-plugin-toolbar-button="${PANEL_ID}"]`);
+  if (!button) {
+    button = document.createElement("button");
+    button.type = "button";
+    button.className = "iconbtn workspace-explorer-btn";
+    button.dataset.pluginToolbarButton = PANEL_ID;
+    button.title = "file browser";
+    button.hidden = app.dataset.route !== "workspace";
+    button.setAttribute("aria-label", "toggle file browser");
+    button.append(materialThemeIcon("folder"));
+    toolbar.insertBefore(button, toolbar.querySelector(".statusbtn"));
+  }
+  button.fileBrowserOnToggle = onToggle;
+  if (!button.fileBrowserToggleBound) {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      button.fileBrowserOnToggle?.();
+    });
+    button.fileBrowserToggleBound = true;
+  }
   return button;
 }
 
@@ -60,12 +66,40 @@ function materialThemeIcon(name, size = 16) {
 
 function syncToolbarButton(app) {
   const button = app.querySelector(`[data-plugin-toolbar-button="${PANEL_ID}"]`);
-  const sidebar = app.querySelector("[data-plugin-sidebar]");
-  button?.classList.toggle("on", app.dataset.tree === "on" && sidebar?.dataset.activePluginPanel === PANEL_ID);
+  const sidebar = app.querySelector("[data-file-browser-sidebar]");
+  button?.classList.toggle("on", sidebar?.dataset.open === "true");
+}
+
+function toggleFileBrowserSidebar(app) {
+  const sidebar = ensureSidebar(app);
+  const isOpen = sidebar.dataset.open !== "true";
+  setFileBrowserSidebarOpen(app, isOpen);
+  return isOpen;
+}
+
+function setFileBrowserSidebarOpen(app, isOpen) {
+  const sidebar = ensureSidebar(app);
+  sidebar.dataset.open = String(isOpen);
+  sidebar.setAttribute("aria-hidden", String(!isOpen));
+}
+
+function ensureOutsideClose(app) {
+  if (app.fileBrowserOutsideCloseBound) return;
+  document.addEventListener("pointerdown", (event) => {
+    const sidebar = app.querySelector("[data-file-browser-sidebar]");
+    if (sidebar?.dataset.open !== "true") return;
+    const target = event.target;
+    if (target.closest?.("[data-file-browser-sidebar]")) return;
+    if (target.closest?.("[data-file-editor-modal]")) return;
+    if (target.closest?.(`[data-plugin-toolbar-button="${PANEL_ID}"]`)) return;
+    setFileBrowserSidebarOpen(app, false);
+    syncToolbarButton(app);
+  });
+  app.fileBrowserOutsideCloseBound = true;
 }
 
 function ensurePanel(app) {
-  const sidebar = app.querySelector("[data-plugin-sidebar]");
+  const sidebar = ensureSidebar(app);
   let panel = sidebar.querySelector(`[data-plugin-panel="${PANEL_ID}"]`);
   if (panel) return panel;
 
@@ -77,9 +111,44 @@ function ensurePanel(app) {
   return panel;
 }
 
+function ensureSidebar(app) {
+  let sidebar = app.querySelector("[data-file-browser-sidebar]");
+  if (sidebar) {
+    syncSidebarTop(app, sidebar);
+    return sidebar;
+  }
+
+  sidebar = document.createElement("aside");
+  sidebar.className = "pi-file-browser-sidebar";
+  sidebar.dataset.fileBrowserSidebar = "";
+  sidebar.dataset.open = "false";
+  sidebar.dataset.ready = "false";
+  sidebar.setAttribute("aria-hidden", "true");
+  app.append(sidebar);
+  syncSidebarTop(app, sidebar);
+  requestAnimationFrame(() => {
+    sidebar.dataset.ready = "true";
+  });
+  if (!app.fileBrowserSidebarTopBound) {
+    window.addEventListener("resize", () => syncSidebarTop(app));
+    app.fileBrowserSidebarTopBound = true;
+  }
+  return sidebar;
+}
+
+function syncSidebarTop(app, sidebar = app.querySelector("[data-file-browser-sidebar]")) {
+  if (!sidebar) return;
+  const topbar = app.querySelector(".topbar") || document.querySelector(".topbar");
+  const top = topbar ? Math.max(0, topbar.getBoundingClientRect().bottom) : 0;
+  sidebar.style.setProperty("--file-browser-sidebar-top", `${top}px`);
+}
+
 function createStyle() {
   const style = document.createElement("style");
   style.textContent = [
+    ".pi-file-browser-sidebar { position: fixed; top: var(--file-browser-sidebar-top, 48px); right: 0; bottom: 0; z-index: 70; width: min(360px, calc(100vw - 48px)); display: flex; flex-direction: column; background: var(--bg-2); border-left: 1px solid var(--border); box-shadow: -18px 0 50px rgba(0,0,0,.35); transform: translateX(100%); pointer-events: none; }",
+    ".pi-file-browser-sidebar[data-ready='true'] { transition: transform .22s ease; }",
+    ".pi-file-browser-sidebar[data-open='true'] { transform: translateX(0); pointer-events: auto; }",
     ".pi-file-browser-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; }",
     ".pi-file-browser-panel .tree-arborist { min-height: 0; }",
     ".pi-file-browser-panel .tree-search { position: relative; display: block; padding: 10px 12px 8px; }",
