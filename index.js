@@ -193,7 +193,7 @@ function rowNode(node, state, depth, expanded) {
 function isExpanded(state, path, depth) {
   if (state.query) return true;
   if (state.collapsed.has(path)) return false;
-  return state.expanded.has(path) || depth === 0;
+  return state.expanded.has(path);
 }
 
 function toggleExpanded(state, path, depth) {
