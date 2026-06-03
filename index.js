@@ -63,9 +63,21 @@ function ensurePanel(app) {
   panel = document.createElement("section");
   panel.dataset.pluginPanel = PANEL_ID;
   panel.className = "pi-file-browser-panel";
-  panel.append(createHeader(), createBody());
+  panel.append(createStyle(), createHeader(), createBody());
   sidebar.append(panel);
   return panel;
+}
+
+function createStyle() {
+  const style = document.createElement("style");
+  style.textContent = [
+    ".pi-file-browser-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; }",
+    ".pi-file-browser-panel .tree-arborist { min-height: 0; }",
+    ".pi-file-browser-panel [data-file-browser-tree] { overflow-y: auto; overflow-x: hidden; }",
+    ".pi-file-browser-panel .tree-node { grid-template-columns: 18px 1fr auto; }",
+    ".pi-file-browser-panel .file-icon img { width: 16px; height: 16px; display: block; }",
+  ].join("\n");
+  return style;
 }
 
 function createHeader() {
@@ -171,16 +183,13 @@ function rowNode(node, state, depth, expanded) {
   row.dataset.fileBrowserAction = isDir ? "toggle" : "open";
   row.dataset.path = path;
   row.dataset.depth = String(depth);
-  const glyph = document.createElement("span");
-  glyph.className = "glyph";
-  glyph.textContent = isDir ? (expanded ? "▾" : "▸") : "•";
   const fileIcon = document.createElement("span");
   fileIcon.className = "file-icon";
-  fileIcon.textContent = isDir ? "📁" : "•";
+  fileIcon.append(materialIcon(node, isDir, expanded));
   const name = document.createElement("span");
   name.className = "name";
   name.textContent = node.name || path;
-  row.append(glyph, fileIcon, name);
+  row.append(fileIcon, name);
   if (status !== "clean") {
     const badge = document.createElement("span");
     badge.className = "tree-status-badge";
@@ -188,6 +197,47 @@ function rowNode(node, state, depth, expanded) {
     row.append(badge);
   }
   return row;
+}
+
+function materialIcon(node, isDir, expanded) {
+  const fallback = isDir ? "📁" : "•";
+  const img = document.createElement("img");
+  img.alt = "";
+  img.src = `/node_modules/material-icon-theme/icons/${materialIconName(node, isDir, expanded)}.svg`;
+  img.addEventListener("error", () => {
+    img.replaceWith(document.createTextNode(fallback));
+  }, { once: true });
+  return img;
+}
+
+function materialIconName(node, isDir, expanded) {
+  if (isDir) {
+    return expanded ? "folder-open" : "folder";
+  }
+  const name = String(node.name || node.path || "").toLowerCase();
+  const exact = {
+    "package.json": "nodejs",
+    "tsconfig.json": "tsconfig",
+    "vite.config.ts": "vite",
+    "astro.config.ts": "astro",
+    "readme.md": "readme",
+  };
+  if (exact[name]) return exact[name];
+  const ext = name.split(".").pop() || "";
+  return {
+    ts: "typescript",
+    tsx: "react_ts",
+    js: "javascript",
+    jsx: "react",
+    json: "json",
+    md: "markdown",
+    css: "css",
+    go: "go",
+    html: "html",
+    svg: "svg",
+    yml: "yaml",
+    yaml: "yaml",
+  }[ext] || "file";
 }
 
 function isExpanded(state, path, depth) {
