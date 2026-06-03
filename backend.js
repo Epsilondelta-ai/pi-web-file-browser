@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { chmodSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -12,15 +12,26 @@ if (!existsSync(binary)) {
   process.exit(1);
 }
 
+try {
+  chmodSync(binary, 0o755);
+} catch {
+  // The binary may already be executable or live on a read-only filesystem.
+}
+
 const run = spawnSync(binary, process.argv.slice(2), {
   encoding: "utf8",
   input: await readStdin(),
   maxBuffer: 1024 * 1024 * 32,
 });
 
+if (run.error) {
+  process.stderr.write(`Failed to execute backend binary: ${run.error.message}\n`);
+  process.exit(1);
+}
+
 process.stdout.write(run.stdout || "");
 process.stderr.write(run.stderr || "");
-process.exit(run.status || 0);
+process.exit(run.status ?? 1);
 
 function resolveBinary() {
   const os = { darwin: "darwin", linux: "linux" }[process.platform];
