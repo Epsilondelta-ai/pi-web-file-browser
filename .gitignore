@@ -1,3 +1,4 @@
 .pi-web-backend-bin
+node_modules/
 
 .rezero/memory/
