@@ -173,10 +173,13 @@ function rowNode(node, state, depth, expanded) {
   const glyph = document.createElement("span");
   glyph.className = "glyph";
   glyph.textContent = isDir ? (expanded ? "▾" : "▸") : "•";
+  const fileIcon = document.createElement("span");
+  fileIcon.className = "file-icon";
+  fileIcon.textContent = isDir ? "📁" : "•";
   const name = document.createElement("span");
   name.className = "name";
   name.textContent = node.name || path;
-  row.append(glyph, name);
+  row.append(glyph, fileIcon, name);
   if (status !== "clean") {
     const badge = document.createElement("span");
     badge.className = "tree-status-badge";
