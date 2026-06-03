@@ -89,8 +89,8 @@ function createStyle() {
     ".pi-file-browser-panel .tree-search input:hover { border-color: color-mix(in srgb, var(--fg-3) 48%, var(--border)); background: var(--bg-1); }",
     ".pi-file-browser-panel .tree-search input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent), inset 0 1px 0 rgba(255,255,255,.04); background: var(--bg-1); }",
     ".pi-file-browser-panel [data-file-browser-tree] { overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; }",
-    ".pi-file-browser-panel .tree-node { grid-template-columns: 18px 1fr auto; position: relative; }",
-    ".pi-file-browser-panel .tree-node-main { display: contents; border: 0; padding: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }",
+    ".pi-file-browser-panel .tree-node { grid-template-columns: minmax(0, 1fr) auto auto; position: relative; gap: 6px; }",
+    ".pi-file-browser-panel .tree-node-main { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 6px; min-width: 0; width: 100%; border: 0; padding: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }",
     ".pi-file-browser-panel .tree-row-menu { min-width: 26px; min-height: 26px; border: 0; border-radius: 7px; background: transparent; color: var(--fg-3); opacity: 0; cursor: pointer; }",
     ".pi-file-browser-panel .tree-node:hover .tree-row-menu, .pi-file-browser-panel .tree-row-menu:focus { opacity: 1; background: var(--bg-4); color: var(--fg-1); }",
     ".pi-file-browser-panel .file-icon img { width: 16px; height: 16px; display: block; }",
@@ -312,6 +312,9 @@ function handleAction(context, state, panel, target) {
   const path = target.dataset.path || "";
   if (action === "refresh") return refresh(context, state, panel);
   if (action === "toggle") {
+    state.query = "";
+    const search = panel.querySelector("[data-file-browser-search]");
+    if (search) search.value = "";
     toggleExpanded(state, path, Number(target.dataset.depth || 0));
     renderTree(panel, state);
     return undefined;
