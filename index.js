@@ -3,7 +3,7 @@ const PANEL_ID = "file-browser";
 export default function activate(context) {
   ensureToolbarButton(context.app);
   const panel = ensurePanel(context.app);
-  const state = { files: [], statusMap: {}, expanded: new Set(), selectedPath: "", query: "" };
+  const state = { files: [], statusMap: {}, expanded: new Set(), collapsed: new Set(), selectedPath: "", query: "" };
 
   panel.addEventListener("click", (event) => {
     const target = event.target.closest("[data-file-browser-action]");
@@ -153,7 +153,7 @@ function appendNode(rows, node, state, depth) {
   if (!matches && childRows.length === 0) return;
 
   const path = node.path || node.name || "";
-  const expanded = state.query || state.expanded.has(path) || depth === 0;
+  const expanded = isExpanded(state, path, depth);
   rows.push(rowNode(node, state, depth, expanded));
   if (isDir && expanded) rows.push(...childRows);
 }
@@ -170,6 +170,7 @@ function rowNode(node, state, depth, expanded) {
   row.style.paddingLeft = `${8 + depth * 14}px`;
   row.dataset.fileBrowserAction = isDir ? "toggle" : "open";
   row.dataset.path = path;
+  row.dataset.depth = String(depth);
   const glyph = document.createElement("span");
   glyph.className = "glyph";
   glyph.textContent = isDir ? (expanded ? "▾" : "▸") : "•";
@@ -189,12 +190,28 @@ function rowNode(node, state, depth, expanded) {
   return row;
 }
 
+function isExpanded(state, path, depth) {
+  if (state.query) return true;
+  if (state.collapsed.has(path)) return false;
+  return state.expanded.has(path) || depth === 0;
+}
+
+function toggleExpanded(state, path, depth) {
+  if (isExpanded(state, path, depth)) {
+    state.expanded.delete(path);
+    state.collapsed.add(path);
+    return;
+  }
+  state.collapsed.delete(path);
+  state.expanded.add(path);
+}
+
 function handleAction(context, state, panel, target) {
   const action = target.dataset.fileBrowserAction;
   const path = target.dataset.path || "";
   if (action === "refresh") return refresh(context, state, panel);
   if (action === "toggle") {
-    state.expanded.has(path) ? state.expanded.delete(path) : state.expanded.add(path);
+    toggleExpanded(state, path, Number(target.dataset.depth || 0));
     renderTree(panel, state);
     return undefined;
   }
