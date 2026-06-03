@@ -89,8 +89,15 @@ function createStyle() {
     ".pi-file-browser-panel .tree-search input:hover { border-color: color-mix(in srgb, var(--fg-3) 48%, var(--border)); background: var(--bg-1); }",
     ".pi-file-browser-panel .tree-search input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent), inset 0 1px 0 rgba(255,255,255,.04); background: var(--bg-1); }",
     ".pi-file-browser-panel [data-file-browser-tree] { overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; }",
-    ".pi-file-browser-panel .tree-node { grid-template-columns: 18px 1fr auto; }",
+    ".pi-file-browser-panel .tree-node { grid-template-columns: 18px 1fr auto; position: relative; }",
+    ".pi-file-browser-panel .tree-node-main { display: contents; border: 0; padding: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }",
+    ".pi-file-browser-panel .tree-row-menu { min-width: 26px; min-height: 26px; border: 0; border-radius: 7px; background: transparent; color: var(--fg-3); opacity: 0; cursor: pointer; }",
+    ".pi-file-browser-panel .tree-node:hover .tree-row-menu, .pi-file-browser-panel .tree-row-menu:focus { opacity: 1; background: var(--bg-4); color: var(--fg-1); }",
     ".pi-file-browser-panel .file-icon img { width: 16px; height: 16px; display: block; }",
+    ".pi-file-browser-menu { position: fixed; z-index: 90; min-width: 148px; padding: 6px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-2); box-shadow: 0 18px 48px rgba(0,0,0,.45); }",
+    ".pi-file-browser-menu button { display: block; width: 100%; border: 0; border-radius: 7px; background: transparent; color: var(--fg-1); font: 12px/1 var(--font-mono); text-align: left; padding: 8px 9px; cursor: pointer; }",
+    ".pi-file-browser-menu button:hover { background: var(--bg-3); }",
+    ".pi-file-browser-menu button.danger { color: var(--danger); }",
     ".pi-file-editor-modal[hidden] { display: none; }",
     ".pi-file-editor-modal { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; background: rgba(0,0,0,.42); }",
     ".pi-file-editor-dialog { width: min(980px, calc(100vw - 32px)); height: min(760px, calc(100vh - 32px)); display: grid; grid-template-rows: auto 1fr; background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius-2); overflow: hidden; box-shadow: 0 24px 80px rgba(0,0,0,.5); }",
@@ -124,7 +131,7 @@ function createHeader() {
   tabs.append(title);
   const actions = document.createElement("span");
   actions.className = "tree-head-actions";
-  actions.append(actionButton("new-file", "+", "new file"), actionButton("refresh", "↻", "refresh files"));
+  actions.append(actionButton("root-menu", "+", "file actions"), actionButton("refresh", "↻", "refresh files"));
   header.append(tabs, actions);
   return header;
 }
@@ -207,28 +214,39 @@ function rowNode(node, state, depth, expanded) {
   const isDir = node.type === "dir";
   const path = node.path || node.name || "";
   const status = normalizeStatus(state.statusMap[path]);
-  const row = document.createElement("button");
-  row.type = "button";
+  const row = document.createElement("div");
   row.className = ["tree-node", isDir ? "dir" : "file", status, state.selectedPath === path ? "selected" : ""]
     .filter(Boolean)
     .join(" ");
   row.style.paddingLeft = `${8 + depth * 14}px`;
-  row.dataset.fileBrowserAction = isDir ? "toggle" : "open";
-  row.dataset.path = path;
-  row.dataset.depth = String(depth);
+  const main = document.createElement("button");
+  main.type = "button";
+  main.className = "tree-node-main";
+  main.dataset.fileBrowserAction = isDir ? "toggle" : "open";
+  main.dataset.path = path;
+  main.dataset.depth = String(depth);
   const fileIcon = document.createElement("span");
   fileIcon.className = "file-icon";
   fileIcon.append(materialIcon(node, isDir, expanded));
   const name = document.createElement("span");
   name.className = "name";
   name.textContent = node.name || path;
-  row.append(fileIcon, name);
+  main.append(fileIcon, name);
+  row.append(main);
   if (status !== "clean") {
     const badge = document.createElement("span");
     badge.className = "tree-status-badge";
     badge.textContent = statusLabel(status);
     row.append(badge);
   }
+  const menu = document.createElement("button");
+  menu.type = "button";
+  menu.className = "tree-row-menu";
+  menu.dataset.fileBrowserAction = "row-menu";
+  menu.dataset.path = path;
+  menu.dataset.kind = isDir ? "dir" : "file";
+  menu.textContent = "…";
+  row.append(menu);
   return row;
 }
 
@@ -304,7 +322,12 @@ function handleAction(context, state, panel, target) {
     void openEditor(context, path);
     return undefined;
   }
-  if (action === "new-file") return createFile(context, state, panel);
+  if (action === "root-menu") return showActionMenu(context, state, panel, target, { path: "", kind: "root" });
+  if (action === "row-menu") return showActionMenu(context, state, panel, target, { path, kind: target.dataset.kind });
+  if (action === "new-file") return createFile(context, state, panel, target.dataset.parent || "");
+  if (action === "upload") return uploadFile(context, state, panel, target.dataset.parent || "");
+  if (action === "rename") return renamePath(context, state, panel, path);
+  if (action === "delete") return deletePath(context, state, panel, path);
   return undefined;
 }
 
@@ -435,12 +458,82 @@ function closeEditor(editor) {
   editor.hidden = true;
 }
 
-async function createFile(context, state, panel) {
+function showActionMenu(context, state, panel, target, item) {
+  panel.querySelector(".pi-file-browser-menu")?.remove();
+  const menu = document.createElement("div");
+  menu.className = "pi-file-browser-menu";
+  const parent = item.kind === "dir" ? item.path : parentPath(item.path || "");
+  menu.append(
+    menuButton("new-file", "new file", parent),
+    menuButton("upload", "upload file", parent),
+  );
+  if (item.kind !== "root") {
+    menu.append(menuButton("rename", "rename", "", item.path), menuButton("delete", "delete", "", item.path, "danger"));
+  }
+  const rect = target.getBoundingClientRect();
+  menu.style.left = `${Math.min(rect.left, window.innerWidth - 170)}px`;
+  menu.style.top = `${Math.min(rect.bottom + 4, window.innerHeight - 160)}px`;
+  panel.append(menu);
+  setTimeout(() => window.addEventListener("click", () => menu.remove(), { once: true }), 0);
+}
+
+function menuButton(action, label, parent = "", path = "", className = "") {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.dataset.fileBrowserAction = action;
+  button.dataset.parent = parent;
+  button.dataset.path = path;
+  if (className) button.className = className;
+  button.textContent = label;
+  return button;
+}
+
+async function createFile(context, state, panel, parent = "") {
   const workspaceId = context.app.dataset.activeWorkspaceId;
-  const path = window.prompt("New file path", "untitled.txt");
+  const path = window.prompt("New file path", joinPath(parent, "untitled.txt"));
   if (!workspaceId || !path) return;
   await context.backend("create", { workspaceId, data: { path, content: "" } });
   await refresh(context, state, panel, path);
+}
+
+async function uploadFile(context, state, panel, parent = "") {
+  const workspaceId = context.app.dataset.activeWorkspaceId;
+  if (!workspaceId) return;
+  const input = document.createElement("input");
+  input.type = "file";
+  input.multiple = true;
+  input.addEventListener("change", async () => {
+    const files = [...(input.files || [])];
+    for (const file of files) {
+      await context.backend("write", { workspaceId, data: { path: joinPath(parent, file.name), content: await file.text() } });
+    }
+    await refresh(context, state, panel);
+  }, { once: true });
+  input.click();
+}
+
+async function renamePath(context, state, panel, path) {
+  const workspaceId = context.app.dataset.activeWorkspaceId;
+  const next = window.prompt("Rename path", path);
+  if (!workspaceId || !path || !next || next === path) return;
+  await context.backend("rename", { workspaceId, data: { path, newPath: next } });
+  await refresh(context, state, panel, next);
+}
+
+async function deletePath(context, state, panel, path) {
+  const workspaceId = context.app.dataset.activeWorkspaceId;
+  if (!workspaceId || !path || !window.confirm(`Delete ${path}?`)) return;
+  await context.backend("delete", { workspaceId, data: { path } });
+  await refresh(context, state, panel);
+}
+
+function parentPath(path) {
+  const index = path.lastIndexOf("/");
+  return index > 0 ? path.slice(0, index) : "";
+}
+
+function joinPath(parent, name) {
+  return parent ? `${parent.replace(/\/$/, "")}/${name}` : name;
 }
 
 function setTree(panel, nodes) {

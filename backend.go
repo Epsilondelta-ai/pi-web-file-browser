@@ -69,6 +69,16 @@ func main() {
 			fail(err)
 		}
 		result = file
+	case "rename":
+		if err := renameFile(root, stringInput(input, "path"), stringInput(input, "newPath")); err != nil {
+			fail(err)
+		}
+		result = map[string]any{"ok": true}
+	case "delete":
+		if err := deleteFile(root, stringInput(input, "path")); err != nil {
+			fail(err)
+		}
+		result = map[string]any{"ok": true}
 	default:
 		fail(fmt.Errorf("unknown method: %s", method))
 	}
@@ -212,6 +222,29 @@ func writeFile(root, rel, content string) (fileContent, error) {
 		return fileContent{}, err
 	}
 	return readFile(root, clean)
+}
+
+func renameFile(root, rel, newRel string) error {
+	clean, err := cleanRel(rel)
+	if err != nil {
+		return err
+	}
+	next, err := cleanRel(newRel)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(filepath.Join(root, next)), 0o755); err != nil {
+		return err
+	}
+	return os.Rename(filepath.Join(root, clean), filepath.Join(root, next))
+}
+
+func deleteFile(root, rel string) error {
+	clean, err := cleanRel(rel)
+	if err != nil {
+		return err
+	}
+	return os.RemoveAll(filepath.Join(root, clean))
 }
 
 func cleanRel(rel string) (string, error) {
