@@ -1,8 +1,30 @@
-const SHELL_FILENAMES = new Set([".env", ".envrc", ".bashrc", ".zshrc", ".profile"]);
-const SHELL_EXTENSIONS = new Set(["bash", "csh", "env", "fish", "sh", "zsh"]);
-export const MAX_EDITABLE_BYTES = 256 * 1024;
+const SHELL_FILENAMES: Set<string> = new Set([".env", ".envrc", ".bashrc", ".zshrc", ".profile"]);
+const SHELL_EXTENSIONS: Set<string> = new Set(["bash", "csh", "env", "fish", "sh", "zsh"]);
 
-export function editableFileState(file) {
+export const MAX_EDITABLE_BYTES: number = 256 * 1024;
+
+export type FilePreviewKind = "loading" | "error" | "text" | "image" | string;
+
+export type FilePreview = {
+  path?: string;
+  mime?: string;
+  content?: string;
+  originalContent?: string;
+  previewKind?: FilePreviewKind;
+  truncated?: boolean;
+  readOnly?: boolean;
+  size?: number;
+};
+
+export type EditableFileState = {
+  editable: boolean;
+  readOnly: boolean;
+  reason: "loading" | "error" | "large" | "missing" | "editable" | "image" | "binary";
+};
+
+export type CodeMirrorLanguageName = "javascript" | "typescript" | "json" | "markdown" | "html" | "css" | "go" | "shell" | "dockerfile" | "makefile" | "text";
+
+export function editableFileState(file: FilePreview): EditableFileState {
   if (file.previewKind === "loading") return { editable: false, readOnly: true, reason: "loading" };
   if (file.previewKind === "error") return { editable: false, readOnly: true, reason: "error" };
   if (file.truncated) return { editable: false, readOnly: true, reason: "large" };
@@ -16,28 +38,28 @@ export function editableFileState(file) {
   return { editable: false, readOnly: true, reason: "binary" };
 }
 
-export function isTextFile(file) {
+export function isTextFile(file: FilePreview): boolean {
   return file.previewKind === "text" || file.mime === "image/svg+xml";
 }
 
-export function fileExtensionFromName(name) {
+export function fileExtensionFromName(name: string): string {
   if (!name.includes(".")) return "";
-  return name.split(".").pop();
+  return name.split(".").pop() || "";
 }
 
-export function codeMirrorLanguageName(file) {
-  const mime = file.mime || "";
+export function codeMirrorLanguageName(file: FilePreview): CodeMirrorLanguageName {
+  const mime: string = file.mime || "";
   if (mime === "application/json") return "json";
   if (mime === "image/svg+xml" || mime.endsWith("+xml")) return "html";
   if (mime === "text/html") return "html";
   if (mime === "text/css") return "css";
 
-  const name = basename(file).toLowerCase();
+  const name: string = basename(file).toLowerCase();
   if (name === "dockerfile") return "dockerfile";
   if (name === "makefile" || name === "justfile") return "makefile";
   if (SHELL_FILENAMES.has(name)) return "shell";
 
-  const extension = fileExtensionFromName(name);
+  const extension: string = fileExtensionFromName(name);
   if (["js", "mjs", "cjs", "jsx"].includes(extension)) return "javascript";
   if (["ts", "mts", "cts", "tsx"].includes(extension)) return "typescript";
   if (["json", "jsonc", "ipynb"].includes(extension)) return "json";
@@ -49,6 +71,6 @@ export function codeMirrorLanguageName(file) {
   return "text";
 }
 
-function basename(file) {
+function basename(file: FilePreview): string {
   return (file.path || "").split("/").pop() || "";
 }

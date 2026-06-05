@@ -9,7 +9,7 @@ import { bracketMatching, indentOnInput, StreamLanguage } from "@codemirror/lang
 import { shell } from "@codemirror/legacy-modes/mode/shell";
 import { diff } from "@codemirror/merge";
 import { findNext, findPrevious, search, SearchQuery, searchKeymap, setSearchQuery } from "@codemirror/search";
-import { EditorState, RangeSetBuilder, StateField } from "@codemirror/state";
+import { EditorState, Extension, RangeSet, RangeSetBuilder, StateField, Text } from "@codemirror/state";
 import {
   drawSelection,
   dropCursor,
@@ -22,36 +22,55 @@ import {
   lineNumbers,
 } from "@codemirror/view";
 import { materialDark } from "@fsegurai/codemirror-theme-material-dark";
-import { codeMirrorLanguageName } from "./file-editor-state.js";
+import { codeMirrorLanguageName } from "./file-editor-state";
+import type { FilePreview } from "./file-editor-state";
 
-export { codeMirrorLanguageName, editableFileState, fileExtensionFromName, MAX_EDITABLE_BYTES } from "./file-editor-state.js";
+export { codeMirrorLanguageName, editableFileState, fileExtensionFromName, MAX_EDITABLE_BYTES } from "./file-editor-state";
+export type { FilePreview } from "./file-editor-state";
+
+type EditorOptions = {
+  file: FilePreview;
+  content: string;
+  originalContent?: string;
+  readOnly?: boolean;
+  onChange?: (content: string) => void;
+  onSave?: () => void;
+};
+
+type SearchDirection = "next" | "previous";
+type GitChangeKind = "added" | "modified" | "deleted";
 
 export class CodeMirrorFileEditor {
-  constructor(parent, options) {
+  private readonly parent: HTMLElement;
+  private view?: EditorView;
+  private saveKeymap: Extension = [];
+  private changeListener: Extension = [];
+
+  constructor(parent: HTMLElement, options: EditorOptions) {
     this.parent = parent;
     this.mount(options);
   }
 
-  update(options) {
+  update(options: EditorOptions): void {
     this.destroy();
     this.mount(options);
   }
 
-  focus() {
+  focus(): void {
     this.view?.contentDOM.focus({ preventScroll: true });
   }
 
-  getValue() {
+  getValue(): string {
     return this.view?.state.doc.toString() || "";
   }
 
-  destroy() {
+  destroy(): void {
     this.view?.destroy();
     this.view = undefined;
     this.parent.replaceChildren();
   }
 
-  mount(options) {
+  mount(options: EditorOptions): void {
     this.parent.classList.add("fp-code-editor", "fp-codemirror-editor");
     this.saveKeymap = keymap.of([
       {
@@ -84,7 +103,7 @@ export class CodeMirrorFileEditor {
     });
   }
 
-  createSearchToolbar() {
+  createSearchToolbar(): HTMLElement {
     const toolbar = document.createElement("div");
     toolbar.className = "fp-editor-search";
     toolbar.setAttribute("role", "search");
@@ -107,12 +126,12 @@ export class CodeMirrorFileEditor {
     next.textContent = "↓";
     next.setAttribute("aria-label", "next search match");
 
-    const applySearch = () => {
+    const applySearch = (): void => {
       const view = this.view;
       if (!view) return;
       view.dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: input.value })) });
     };
-    const move = (direction) => {
+    const move = (direction: SearchDirection): void => {
       applySearch();
       const view = this.view;
       if (!view || !input.value) return;
@@ -134,7 +153,7 @@ export class CodeMirrorFileEditor {
   }
 }
 
-export function codeMirrorLanguageExtension(file) {
+export function codeMirrorLanguageExtension(file: FilePreview): Extension[] {
   const name = (file.path || "").split("/").pop()?.toLowerCase() || "";
   const extension = name.includes(".") ? name.split(".").pop() : "";
   switch (codeMirrorLanguageName(file)) {
@@ -159,7 +178,7 @@ export function codeMirrorLanguageExtension(file) {
   }
 }
 
-function editorExtensions(file, readOnly, originalContent, ...extra) {
+function editorExtensions(file: FilePreview, readOnly: boolean, originalContent: string, ...extra: Extension[]): Extension[] {
   const changeIndicator = readOnly ? [] : gitChangeGutter(originalContent);
 
   return [
@@ -187,7 +206,9 @@ function editorExtensions(file, readOnly, originalContent, ...extra) {
 }
 
 export class GitChangeMarker extends GutterMarker {
-  constructor(kind) {
+  private readonly kind: GitChangeKind;
+
+  constructor(kind: GitChangeKind) {
     super();
     this.kind = kind;
   }
@@ -206,16 +227,17 @@ const gitMarkers = {
   deleted: new GitChangeMarker("deleted"),
 };
 
-function gitChangeGutter(originalContent) {
+function gitChangeGutter(originalContent: string): Extension[] {
   const field = StateField.define({
     create: (state) => buildGitChangeMarkers(originalContent, state.doc),
-    update: (markers, transaction) => transaction.docChanged ? buildGitChangeMarkers(originalContent, transaction.state.doc) : markers,
+    update: (markers: RangeSet<GutterMarker>, transaction): RangeSet<GutterMarker> =>
+      transaction.docChanged ? buildGitChangeMarkers(originalContent, transaction.state.doc) : markers,
   });
-  return [field, gutter({ class: "cm-gitChangeGutter", markers: (view) => view.state.field(field) })];
+  return [field, gutter({ class: "cm-gitChangeGutter", markers: (view: EditorView): RangeSet<GutterMarker> => view.state.field(field) })];
 }
 
-export function buildGitChangeMarkers(originalContent, doc) {
-  const builder = new RangeSetBuilder();
+export function buildGitChangeMarkers(originalContent: string, doc: Text): RangeSet<GutterMarker> {
+  const builder = new RangeSetBuilder<GutterMarker>();
   for (const change of diff(originalContent, doc.toString())) {
     if (change.fromB === change.toB) {
       addLineMarker(builder, doc, change.fromB, "deleted");
@@ -227,7 +249,13 @@ export function buildGitChangeMarkers(originalContent, doc) {
   return builder.finish();
 }
 
-export function addLineMarkers(builder, doc, from, to, kind) {
+export function addLineMarkers(
+  builder: RangeSetBuilder<GutterMarker>,
+  doc: Text,
+  from: number,
+  to: number,
+  kind: GitChangeKind,
+): void {
   const docEnd = doc.length;
   const start = Math.max(0, Math.min(from, docEnd));
   const end = Math.max(start, Math.min(to, docEnd));
@@ -246,13 +274,13 @@ export function addLineMarkers(builder, doc, from, to, kind) {
   }
 }
 
-function addLineMarker(builder, doc, position, kind) {
+function addLineMarker(builder: RangeSetBuilder<GutterMarker>, doc: Text, position: number, kind: GitChangeKind): void {
   const safePosition = Math.max(0, Math.min(position, doc.length));
   const line = doc.lineAt(safePosition);
   builder.add(line.from, line.from, gitMarkers[kind]);
 }
 
-function piEditorTheme() {
+function piEditorTheme(): Extension {
   return EditorView.theme(
     {
       "&": {

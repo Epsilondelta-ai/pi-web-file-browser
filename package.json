@@ -4,7 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "bun build src/index.js --outfile index.js --target browser --format esm --sourcemap=none --minify"
+    "build": "bun run build:frontend && bun run build:backend",
+    "typecheck": "bun x tsc --noEmit",
+    "check": "bun run typecheck && bun run build",
+    "build:frontend": "bun build src/index.ts --outfile index.js --target browser --format esm --sourcemap=none --minify",
+    "build:backend": "bun build backend.ts --outfile backend.js --target node --format esm --sourcemap=none"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.3",
@@ -21,5 +25,9 @@
     "@codemirror/state": "^6.6.0",
     "@codemirror/view": "^6.43.0",
     "@fsegurai/codemirror-theme-material-dark": "^6.2.5"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3",
+    "@types/node": "^24.0.0"
   }
 }
