@@ -16,7 +16,8 @@
     "allowJs": false,
     "noEmit": true,
     "types": [
-      "node"
+      "node",
+      "bun"
     ]
   },
   "include": [

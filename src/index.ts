@@ -3,17 +3,17 @@ import type { FilePreview } from "./file-editor";
 
 const PANEL_ID = "file-browser";
 
-type SubscriptionLike = { closed?: boolean; unsubscribe(): void };
-type SubjectLike<T> = { subscribe(callback: (value: T) => void): SubscriptionLike };
-type SidebarSnapshot = { activeWorkspaceId: string };
-type SidebarApi = { state$?: SubjectLike<SidebarSnapshot>; getSnapshot?: () => SidebarSnapshot };
+export type SubscriptionLike = { closed?: boolean; unsubscribe(): void };
+export type SubjectLike<T> = { subscribe(callback: (value: T) => void): SubscriptionLike };
+export type SidebarSnapshot = { activeWorkspaceId: string };
+export type SidebarApi = { state$?: SubjectLike<SidebarSnapshot>; getSnapshot?: () => SidebarSnapshot };
 type BackendResult = { files?: FileNode[]; statusMap?: Record<string, string> };
-type PluginContext = {
+export type PluginContext = {
   app: AppElement;
   backend(method: string, input: { workspaceId?: string; data?: Record<string, unknown> }): Promise<BackendResult & FilePreview>;
   files?: { read(workspaceId: string, path: string): Promise<FilePreview> };
 };
-type AppElement = HTMLElement & {
+export type AppElement = HTMLElement & {
   fileBrowserOutsideCloseBound?: boolean;
   fileBrowserSidebarTopBound?: boolean;
   piWebSidebar?: SidebarApi;
@@ -21,7 +21,7 @@ type AppElement = HTMLElement & {
   workspaceFileStatuses?: Record<string, string>;
 };
 type FileBrowserButton = HTMLButtonElement & { fileBrowserOnToggle?: () => void; fileBrowserToggleBound?: boolean };
-type FileBrowserState = {
+export type FileBrowserState = {
   files: FileNode[];
   statusMap: Record<string, string>;
   expanded: Set<string>;
@@ -43,16 +43,7 @@ type MaterialIconName = string;
 
 export default function activate(context: PluginContext): () => void {
   const panel = ensurePanel(context.app);
-  const state: FileBrowserState = {
-    files: [],
-    statusMap: {},
-    expanded: new Set<string>(),
-    collapsed: new Set<string>(),
-    selectedPath: "",
-    query: "",
-    sidebarConnected: false,
-    sidebarWorkspaceId: "",
-  };
+  const state: FileBrowserState = createFileBrowserState();
   ensureToolbarButton(context.app, () => {
     const isOpen = toggleFileBrowserSidebar(context.app);
     syncToolbarButton(context.app);
@@ -79,9 +70,9 @@ export default function activate(context: PluginContext): () => void {
   });
 
   const refreshActiveWorkspace = (): void => {
-    bindSidebarBridge(context, state, panel);
+    const bridgeChanged: boolean = bindSidebarBridge(context, state, panel);
 
-    if (!state.sidebarConnected) {
+    if (bridgeChanged || !state.sidebarConnected) {
       void refresh(context, state, panel);
     }
   };
@@ -113,13 +104,40 @@ export default function activate(context: PluginContext): () => void {
   };
 }
 
-function bindSidebarBridge(context: PluginContext, state: FileBrowserState, panel: HTMLElement): void {
+export function createFileBrowserState(): FileBrowserState {
+  return {
+    files: [],
+    statusMap: {},
+    expanded: new Set<string>(),
+    collapsed: new Set<string>(),
+    selectedPath: "",
+    query: "",
+    sidebarConnected: false,
+    sidebarWorkspaceId: "",
+  };
+}
+
+export function bindSidebarBridge(context: PluginContext, state: FileBrowserState, panel: HTMLElement): boolean {
   const sidebarApi: SidebarApi | undefined = context.app.piWebSidebar;
   const stateSubject: SubjectLike<SidebarSnapshot> | undefined = sidebarApi?.state$;
+  const previousConnected: boolean = state.sidebarConnected;
+  const previousSubject: SubjectLike<SidebarSnapshot> | undefined = state.sidebarStateSubject;
+  const previousSubscriptionClosed: boolean = !!state.sidebarSubscription?.closed;
+  const previousWorkspaceId: string = state.sidebarWorkspaceId;
+  const hasSnapshot: boolean = typeof sidebarApi?.getSnapshot === "function";
+  const snapshotWorkspaceId: string = hasSnapshot ? sidebarApi.getSnapshot().activeWorkspaceId || "" : "";
 
-  if (state.sidebarSubscription && !state.sidebarSubscription.closed && state.sidebarStateSubject === stateSubject) {
+  if (state.sidebarSubscription && !state.sidebarSubscription.closed && previousSubject === stateSubject) {
     state.sidebarConnected = true;
-    return;
+
+    if (hasSnapshot && snapshotWorkspaceId !== state.sidebarWorkspaceId) {
+      state.sidebarWorkspaceId = snapshotWorkspaceId;
+      state.selectedPath = "";
+      state.query = "";
+      return true;
+    }
+
+    return false;
   }
 
   state.sidebarSubscription?.unsubscribe();
@@ -128,12 +146,14 @@ function bindSidebarBridge(context: PluginContext, state: FileBrowserState, pane
 
   if (!stateSubject) {
     state.sidebarConnected = false;
-    return;
+    state.sidebarWorkspaceId = "";
+    return previousConnected || !!previousWorkspaceId;
   }
 
   state.sidebarConnected = true;
   state.sidebarStateSubject = stateSubject;
-  state.sidebarWorkspaceId = sidebarApi?.getSnapshot?.().activeWorkspaceId || context.app.dataset.activeWorkspaceId || "";
+  state.sidebarWorkspaceId = snapshotWorkspaceId;
+  let initializing = true;
   state.sidebarSubscription = stateSubject.subscribe((snapshot: SidebarSnapshot): void => {
     const nextWorkspaceId: string = snapshot.activeWorkspaceId || "";
 
@@ -144,13 +164,24 @@ function bindSidebarBridge(context: PluginContext, state: FileBrowserState, pane
     state.sidebarWorkspaceId = nextWorkspaceId;
     state.selectedPath = "";
     state.query = "";
-    void refresh(context, state, panel);
+
+    if (!initializing) {
+      void refresh(context, state, panel);
+    }
   });
+  initializing = false;
+
+  return (
+    !previousConnected ||
+    previousSubject !== stateSubject ||
+    previousSubscriptionClosed ||
+    previousWorkspaceId !== state.sidebarWorkspaceId
+  );
 }
 
-function activeWorkspaceId(context: PluginContext, state: FileBrowserState): string {
+export function activeWorkspaceId(context: PluginContext, state: FileBrowserState): string {
   if (state.sidebarConnected) {
-    return state.sidebarWorkspaceId || context.app.dataset.activeWorkspaceId || "";
+    return state.sidebarWorkspaceId;
   }
 
   return context.app.dataset.activeWorkspaceId || "";
@@ -448,6 +479,11 @@ function actionButton(action, label, title) {
 async function refresh(context: PluginContext, state: FileBrowserState, panel: HTMLElement, selectedPath = ""): Promise<void> {
   const workspaceId: string = activeWorkspaceId(context, state);
   if (!workspaceId) {
+    state.files = [];
+    state.statusMap = {};
+    state.selectedPath = "";
+    context.app.workspaceFiles = state.files;
+    context.app.workspaceFileStatuses = state.statusMap;
     setTree(panel, [emptyNode("open a workspace first")]);
     return;
   }
