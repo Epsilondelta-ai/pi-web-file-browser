@@ -13,7 +13,8 @@ export default function activate(context) {
   ensureOutsideClose(context.app);
 
   panel.addEventListener("click", (event) => {
-    const target = event.target.closest("[data-file-browser-action]");
+    const source = event.target?.nodeType === 1 ? event.target : event.target?.parentElement;
+    const target = source?.closest?.("[data-file-browser-action]");
     if (!target || !panel.contains(target)) return;
     event.preventDefault();
     handleAction(context, state, panel, target);
@@ -164,6 +165,7 @@ function ensureOutsideClose(app) {
     if (sidebar?.dataset.open !== "true") return;
     const target = event.target;
     if (target.closest?.("[data-file-browser-sidebar]")) return;
+    if (target.closest?.(".pi-file-browser-menu")) return;
     if (target.closest?.("[data-file-editor-modal]")) return;
     if (target.closest?.(`[data-plugin-toolbar-button="${PANEL_ID}"]`)) return;
     setFileBrowserSidebarOpen(app, false);
@@ -474,6 +476,7 @@ function handleAction(context, state, panel, target) {
   if (action === "root-menu") return showActionMenu(context, state, panel, target, { path: "", kind: "root" });
   if (action === "row-menu") return showActionMenu(context, state, panel, target, { path, kind: target.dataset.kind });
   if (action === "new-file") return createFile(context, state, panel, target.dataset.parent || "");
+  if (action === "new-folder") return createFolder(context, state, panel, target.dataset.parent || "");
   if (action === "upload") return uploadFile(context, state, panel, target.dataset.parent || "");
   if (action === "rename") return renamePath(context, state, panel, path);
   if (action === "delete") return deletePath(context, state, panel, path);
@@ -606,21 +609,31 @@ function closeEditor(editor) {
 }
 
 function showActionMenu(context, state, panel, target, item) {
-  panel.querySelector(".pi-file-browser-menu")?.remove();
+  document.querySelector(".pi-file-browser-menu")?.remove();
   const menu = document.createElement("div");
   menu.className = "pi-file-browser-menu";
   const parent = item.kind === "dir" ? item.path : parentPath(item.path || "");
   menu.append(
     menuButton("new-file", "new file", parent),
+    menuButton("new-folder", "new folder", parent),
     menuButton("upload", "upload file", parent),
   );
   if (item.kind !== "root") {
     menu.append(menuButton("rename", "rename", "", item.path), menuButton("delete", "delete", "", item.path, "danger"));
   }
+  menu.addEventListener("click", (event) => {
+    const source = event.target?.nodeType === 1 ? event.target : event.target?.parentElement;
+    const actionTarget = source?.closest?.("[data-file-browser-action]");
+    if (!actionTarget || !menu.contains(actionTarget)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    menu.remove();
+    handleAction(context, state, panel, actionTarget);
+  });
   const rect = target.getBoundingClientRect();
   menu.style.left = `${Math.min(rect.left, window.innerWidth - 170)}px`;
   menu.style.top = `${Math.min(rect.bottom + 4, window.innerHeight - 160)}px`;
-  panel.append(menu);
+  document.body.append(menu);
   setTimeout(() => window.addEventListener("click", () => menu.remove(), { once: true }), 0);
 }
 
@@ -641,6 +654,15 @@ async function createFile(context, state, panel, parent = "") {
   if (!workspaceId || !path) return;
   await context.backend("create", { workspaceId, data: { path, content: "" } });
   await refresh(context, state, panel, path);
+}
+
+async function createFolder(context, state, panel, parent = "") {
+  const workspaceId = context.app.dataset.activeWorkspaceId;
+  const path = window.prompt("New folder path", joinPath(parent, "untitled"));
+  if (!workspaceId || !path) return;
+  await context.backend("create-folder", { workspaceId, data: { path } });
+  state.expanded.add(path);
+  await refresh(context, state, panel);
 }
 
 async function uploadFile(context, state, panel, parent = "") {
