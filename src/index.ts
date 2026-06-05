@@ -3,7 +3,7 @@ import type { FilePreview } from "./file-editor";
 
 const PANEL_ID = "file-browser";
 
-type SubscriptionLike = { unsubscribe(): void };
+type SubscriptionLike = { closed?: boolean; unsubscribe(): void };
 type SubjectLike<T> = { subscribe(callback: (value: T) => void): SubscriptionLike };
 type SidebarSnapshot = { activeWorkspaceId: string };
 type SidebarApi = { state$?: SubjectLike<SidebarSnapshot>; getSnapshot?: () => SidebarSnapshot };
@@ -29,6 +29,7 @@ type FileBrowserState = {
   selectedPath: string;
   query: string;
   sidebarConnected: boolean;
+  sidebarStateSubject?: SubjectLike<SidebarSnapshot>;
   sidebarSubscription?: SubscriptionLike;
   sidebarWorkspaceId: string;
 };
@@ -116,10 +117,14 @@ function bindSidebarBridge(context: PluginContext, state: FileBrowserState, pane
   const sidebarApi: SidebarApi | undefined = context.app.piWebSidebar;
   const stateSubject: SubjectLike<SidebarSnapshot> | undefined = sidebarApi?.state$;
 
-  if (state.sidebarSubscription) {
+  if (state.sidebarSubscription && !state.sidebarSubscription.closed && state.sidebarStateSubject === stateSubject) {
     state.sidebarConnected = true;
     return;
   }
+
+  state.sidebarSubscription?.unsubscribe();
+  state.sidebarSubscription = undefined;
+  state.sidebarStateSubject = undefined;
 
   if (!stateSubject) {
     state.sidebarConnected = false;
@@ -127,6 +132,7 @@ function bindSidebarBridge(context: PluginContext, state: FileBrowserState, pane
   }
 
   state.sidebarConnected = true;
+  state.sidebarStateSubject = stateSubject;
   state.sidebarWorkspaceId = sidebarApi?.getSnapshot?.().activeWorkspaceId || context.app.dataset.activeWorkspaceId || "";
   state.sidebarSubscription = stateSubject.subscribe((snapshot: SidebarSnapshot): void => {
     const nextWorkspaceId: string = snapshot.activeWorkspaceId || "";
