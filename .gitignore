@@ -2,3 +2,4 @@
 node_modules/
 
 .rezero/memory/
+.pi/npm
