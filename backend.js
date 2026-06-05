@@ -1,8 +1,9 @@
-import { chmodSync, existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
+const MAX_INLINE_CONTENT_BYTES = 700 * 1024;
 const dir = dirname(fileURLToPath(import.meta.url));
 const binary = resolveBinary();
 
@@ -18,9 +19,37 @@ try {
   // The binary may already be executable or live on a read-only filesystem.
 }
 
+const method = process.argv[2] || "";
+const root = process.argv[3] || "";
+const input = await readBackendInput();
+
+if (method === "create-folder") {
+  try {
+    const data = JSON.parse(input || "{}");
+    mkdirSync(safeWorkspacePath(root, data.path), { recursive: true });
+    process.stdout.write(JSON.stringify({ ok: true, path: normalizeRelPath(data.path) }));
+    process.exit(0);
+  } catch (error) {
+    process.stderr.write(error.message || "failed to create folder");
+    process.exit(1);
+  }
+}
+
+if (method === "read") {
+  try {
+    const data = JSON.parse(input || "{}");
+    const file = readWorkspaceFile(root, data.path);
+    process.stdout.write(JSON.stringify(file));
+    process.exit(0);
+  } catch (error) {
+    process.stderr.write(error.message || "failed to read file");
+    process.exit(1);
+  }
+}
+
 const run = spawnSync(binary, process.argv.slice(2), {
   encoding: "utf8",
-  input: await readStdin(),
+  input,
   maxBuffer: 1024 * 1024 * 32,
 });
 
@@ -38,6 +67,76 @@ function resolveBinary() {
   const arch = { x64: "amd64", arm64: "arm64" }[process.arch];
   if (!os || !arch) return join(dir, "bin", "unsupported", "pi-web-file-browser-backend");
   return join(dir, "bin", `${os}-${arch}`, "pi-web-file-browser-backend");
+}
+
+async function readBackendInput() {
+  const raw = await readStdin();
+  return normalizeBackendInput(raw);
+}
+
+function readWorkspaceFile(root, rel) {
+  const clean = normalizeRelPath(rel);
+  const path = safeWorkspacePath(root, clean);
+  const size = statSync(path).size;
+  const truncated = size > MAX_INLINE_CONTENT_BYTES;
+  const bytes = readFileSync(path).subarray(0, truncated ? MAX_INLINE_CONTENT_BYTES : undefined);
+  const suffix = truncated
+    ? `\n\n--- File preview truncated at ${MAX_INLINE_CONTENT_BYTES} bytes. Save is disabled. ---\n`
+    : "";
+  return {
+    path: clean,
+    content: `${bytes.toString("utf8")}${suffix}`,
+    size,
+    mime: mimeType(clean),
+    truncated,
+    readOnly: truncated,
+  };
+}
+
+function safeWorkspacePath(root, rel) {
+  if (!root) throw new Error("workspace root is required");
+  const clean = normalizeRelPath(rel);
+  return join(root, clean);
+}
+
+function mimeType(path) {
+  return {
+    ".css": "text/css",
+    ".go": "text/x-go",
+    ".html": "text/html",
+    ".js": "text/javascript",
+    ".json": "application/json",
+    ".jsx": "text/javascript",
+    ".md": "text/markdown",
+    ".sh": "text/x-shellscript",
+    ".ts": "text/typescript",
+    ".tsx": "text/typescript",
+    ".txt": "text/plain",
+    ".yaml": "application/x-yaml",
+    ".yml": "application/x-yaml",
+  }[extname(path).toLowerCase()] || "text/plain";
+}
+
+function normalizeRelPath(rel) {
+  const clean = String(rel || "").replace(/^\/+/, "").split("/").filter(Boolean).join("/");
+  if (!clean || clean === "." || clean === ".." || clean.startsWith("../") || clean.includes("/../") || clean.endsWith("/..")) {
+    throw new Error("invalid folder path");
+  }
+  return clean;
+}
+
+function normalizeBackendInput(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed) return raw;
+  try {
+    const input = JSON.parse(trimmed);
+    if (input && typeof input === "object" && input.data && typeof input.data === "object") {
+      return JSON.stringify(input.data);
+    }
+  } catch {
+    // Keep the original payload. The Go backend will report malformed JSON.
+  }
+  return raw;
 }
 
 async function readStdin() {
