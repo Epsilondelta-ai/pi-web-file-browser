@@ -16,7 +16,6 @@ class TestSubject implements SubjectLike<SidebarSnapshot> {
   public subscribeCount = 0;
   public unsubscribeCount = 0;
   public latestSubscription?: SubscriptionLike;
-  private subscriber?: (value: SidebarSnapshot) => void;
 
   public constructor(activeWorkspaceId: string) {
     this.activeWorkspaceId = activeWorkspaceId;
@@ -24,7 +23,6 @@ class TestSubject implements SubjectLike<SidebarSnapshot> {
 
   public subscribe(callback: (value: SidebarSnapshot) => void): SubscriptionLike {
     this.subscribeCount += 1;
-    this.subscriber = callback;
     callback({ activeWorkspaceId: this.activeWorkspaceId });
     const subscription: SubscriptionLike = {
       closed: false,
@@ -36,11 +34,6 @@ class TestSubject implements SubjectLike<SidebarSnapshot> {
     this.latestSubscription = subscription;
 
     return subscription;
-  }
-
-  public next(activeWorkspaceId: string): void {
-    this.activeWorkspaceId = activeWorkspaceId;
-    this.subscriber?.({ activeWorkspaceId });
   }
 }
 
@@ -56,20 +49,17 @@ function contextWith(workspaceId: string, sidebar?: SidebarApi): PluginContext {
   };
 }
 
-function sidebarWithSnapshot(subject: TestSubject): SidebarApi {
-  return {
-    state$: subject,
-    getSnapshot: (): SidebarSnapshot => ({ activeWorkspaceId: subject.activeWorkspaceId }),
-  };
+function sidebar(subject: TestSubject): SidebarApi {
+  return { state$: subject };
 }
 
 const panel = {} as unknown as HTMLElement;
 
 describe("sidebar bridge workspace resolution", (): void => {
-  test("uses pi-web-sidebar workspace before dataset fallback", (): void => {
+  test("uses pi-web-sidebar state$ workspace before dataset fallback", (): void => {
     const state = createFileBrowserState();
     const subject = new TestSubject("sidebar-workspace");
-    const context = contextWith("dataset-workspace", sidebarWithSnapshot(subject));
+    const context = contextWith("dataset-workspace", sidebar(subject));
 
     expect(bindSidebarBridge(context, state, panel)).toBe(true);
     expect(activeWorkspaceId(context, state)).toBe("sidebar-workspace");
@@ -83,20 +73,20 @@ describe("sidebar bridge workspace resolution", (): void => {
     expect(activeWorkspaceId(context, state)).toBe("dataset-workspace");
   });
 
-  test("connected state$ without getSnapshot waits for emissions instead of using dataset", (): void => {
+  test("connected empty state$ does not fall back to dataset", (): void => {
     const state = createFileBrowserState();
     const subject = new TestSubject("");
-    const context = contextWith("dataset-workspace", { state$: subject });
+    const context = contextWith("dataset-workspace", sidebar(subject));
 
     expect(bindSidebarBridge(context, state, panel)).toBe(true);
     expect(activeWorkspaceId(context, state)).toBe("");
     expect(subject.subscribeCount).toBe(1);
   });
 
-  test("same state$ without getSnapshot preserves last emitted workspace on rebind", (): void => {
+  test("same state$ preserves last emitted workspace on rebind", (): void => {
     const state = createFileBrowserState();
     const subject = new TestSubject("emitted-workspace");
-    const context = contextWith("dataset-workspace", { state$: subject });
+    const context = contextWith("dataset-workspace", sidebar(subject));
 
     bindSidebarBridge(context, state, panel);
     expect(bindSidebarBridge(context, state, panel)).toBe(false);
@@ -105,14 +95,14 @@ describe("sidebar bridge workspace resolution", (): void => {
     expect(subject.subscribeCount).toBe(1);
   });
 
-  test("new state$ without getSnapshot clears previous emitted workspace until it emits", (): void => {
+  test("new state$ clears previous emitted workspace until it emits", (): void => {
     const state = createFileBrowserState();
     const firstSubject = new TestSubject("first-workspace");
     const secondSubject = new TestSubject("");
-    const context = contextWith("dataset-workspace", { state$: firstSubject });
+    const context = contextWith("dataset-workspace", sidebar(firstSubject));
 
     bindSidebarBridge(context, state, panel);
-    context.app.piWebSidebar = { state$: secondSubject };
+    context.app.piWebSidebar = sidebar(secondSubject);
 
     expect(bindSidebarBridge(context, state, panel)).toBe(true);
     expect(activeWorkspaceId(context, state)).toBe("");
@@ -122,10 +112,10 @@ describe("sidebar bridge workspace resolution", (): void => {
   test("replaces an existing sidebar subscription when state$ changes", (): void => {
     const state = createFileBrowserState();
     const firstSubject = new TestSubject("first-workspace");
-    const context = contextWith("dataset-workspace", sidebarWithSnapshot(firstSubject));
+    const context = contextWith("dataset-workspace", sidebar(firstSubject));
 
     bindSidebarBridge(context, state, panel);
-    context.app.piWebSidebar = sidebarWithSnapshot(new TestSubject("second-workspace"));
+    context.app.piWebSidebar = sidebar(new TestSubject("second-workspace"));
     expect(bindSidebarBridge(context, state, panel)).toBe(true);
 
     expect(firstSubject.unsubscribeCount).toBe(1);
@@ -135,7 +125,7 @@ describe("sidebar bridge workspace resolution", (): void => {
   test("keeps the existing subscription when the same state$ is rebound", (): void => {
     const state = createFileBrowserState();
     const subject = new TestSubject("sidebar-workspace");
-    const context = contextWith("dataset-workspace", sidebarWithSnapshot(subject));
+    const context = contextWith("dataset-workspace", sidebar(subject));
 
     bindSidebarBridge(context, state, panel);
     expect(bindSidebarBridge(context, state, panel)).toBe(false);
@@ -144,23 +134,10 @@ describe("sidebar bridge workspace resolution", (): void => {
     expect(subject.unsubscribeCount).toBe(0);
   });
 
-  test("reports changed workspace when same state$ snapshot changes before an event", (): void => {
-    const state = createFileBrowserState();
-    const subject = new TestSubject("first-workspace");
-    const context = contextWith("dataset-workspace", sidebarWithSnapshot(subject));
-
-    bindSidebarBridge(context, state, panel);
-    subject.activeWorkspaceId = "second-workspace";
-    expect(bindSidebarBridge(context, state, panel)).toBe(true);
-
-    expect(subject.subscribeCount).toBe(1);
-    expect(activeWorkspaceId(context, state)).toBe("second-workspace");
-  });
-
   test("resubscribes when the same state$ subscription is closed", (): void => {
     const state = createFileBrowserState();
     const subject = new TestSubject("sidebar-workspace");
-    const context = contextWith("dataset-workspace", sidebarWithSnapshot(subject));
+    const context = contextWith("dataset-workspace", sidebar(subject));
 
     bindSidebarBridge(context, state, panel);
     subject.latestSubscription?.unsubscribe();
@@ -168,17 +145,5 @@ describe("sidebar bridge workspace resolution", (): void => {
 
     expect(subject.subscribeCount).toBe(2);
     expect(activeWorkspaceId(context, state)).toBe("sidebar-workspace");
-  });
-
-  test("connected empty bridge snapshot does not fall back to stale dataset", (): void => {
-    const state = createFileBrowserState();
-    const subject = new TestSubject("first-workspace");
-    const context = contextWith("dataset-workspace", sidebarWithSnapshot(subject));
-
-    bindSidebarBridge(context, state, panel);
-    subject.activeWorkspaceId = "";
-    expect(bindSidebarBridge(context, state, panel)).toBe(true);
-
-    expect(activeWorkspaceId(context, state)).toBe("");
   });
 });

@@ -6,7 +6,7 @@ const PANEL_ID = "file-browser";
 export type SubscriptionLike = { closed?: boolean; unsubscribe(): void };
 export type SubjectLike<T> = { subscribe(callback: (value: T) => void): SubscriptionLike };
 export type SidebarSnapshot = { activeWorkspaceId: string };
-export type SidebarApi = { state$?: SubjectLike<SidebarSnapshot>; getSnapshot?: () => SidebarSnapshot };
+export type SidebarApi = { state$?: SubjectLike<SidebarSnapshot> };
 type BackendResult = { files?: FileNode[]; statusMap?: Record<string, string> };
 export type PluginContext = {
   app: AppElement;
@@ -124,19 +124,8 @@ export function bindSidebarBridge(context: PluginContext, state: FileBrowserStat
   const previousSubject: SubjectLike<SidebarSnapshot> | undefined = state.sidebarStateSubject;
   const previousSubscriptionClosed: boolean = !!state.sidebarSubscription?.closed;
   const previousWorkspaceId: string = state.sidebarWorkspaceId;
-  const hasSnapshot: boolean = typeof sidebarApi?.getSnapshot === "function";
-  const snapshotWorkspaceId: string = hasSnapshot ? sidebarApi.getSnapshot().activeWorkspaceId || "" : "";
-
   if (state.sidebarSubscription && !state.sidebarSubscription.closed && previousSubject === stateSubject) {
     state.sidebarConnected = true;
-
-    if (hasSnapshot && snapshotWorkspaceId !== state.sidebarWorkspaceId) {
-      state.sidebarWorkspaceId = snapshotWorkspaceId;
-      state.selectedPath = "";
-      state.query = "";
-      return true;
-    }
-
     return false;
   }
 
@@ -152,7 +141,7 @@ export function bindSidebarBridge(context: PluginContext, state: FileBrowserStat
 
   state.sidebarConnected = true;
   state.sidebarStateSubject = stateSubject;
-  state.sidebarWorkspaceId = snapshotWorkspaceId;
+  state.sidebarWorkspaceId = "";
   let initializing = true;
   state.sidebarSubscription = stateSubject.subscribe((snapshot: SidebarSnapshot): void => {
     const nextWorkspaceId: string = snapshot.activeWorkspaceId || "";
