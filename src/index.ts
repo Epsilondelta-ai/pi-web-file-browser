@@ -28,6 +28,7 @@ type FileBrowserState = {
   collapsed: Set<string>;
   selectedPath: string;
   query: string;
+  sidebarConnected: boolean;
   sidebarSubscription?: SubscriptionLike;
   sidebarWorkspaceId: string;
 };
@@ -48,12 +49,17 @@ export default function activate(context: PluginContext): () => void {
     collapsed: new Set<string>(),
     selectedPath: "",
     query: "",
+    sidebarConnected: false,
     sidebarWorkspaceId: "",
   };
   ensureToolbarButton(context.app, () => {
     const isOpen = toggleFileBrowserSidebar(context.app);
     syncToolbarButton(context.app);
-    if (isOpen) refresh(context, state, panel);
+
+    if (isOpen) {
+      bindSidebarBridge(context, state, panel);
+      refresh(context, state, panel);
+    }
   });
   ensureOutsideClose(context.app);
 
@@ -72,7 +78,11 @@ export default function activate(context: PluginContext): () => void {
   });
 
   const refreshActiveWorkspace = (): void => {
-    void refresh(context, state, panel);
+    bindSidebarBridge(context, state, panel);
+
+    if (!state.sidebarConnected) {
+      void refresh(context, state, panel);
+    }
   };
   const refreshTree = (event: Event): void => {
     const detail = (event as CustomEvent<{ selectedPath?: string }>).detail;
@@ -84,7 +94,7 @@ export default function activate(context: PluginContext): () => void {
     if (!path) return;
     state.selectedPath = path;
     renderTree(panel, state);
-    void openEditor(context, path);
+    void openEditor(context, state, path);
   };
   window.addEventListener("pi-workspace:active", refreshActiveWorkspace);
   window.addEventListener("pi-workspace-tree:refresh", refreshTree);
@@ -106,10 +116,17 @@ function bindSidebarBridge(context: PluginContext, state: FileBrowserState, pane
   const sidebarApi: SidebarApi | undefined = context.app.piWebSidebar;
   const stateSubject: SubjectLike<SidebarSnapshot> | undefined = sidebarApi?.state$;
 
-  if (!stateSubject || state.sidebarSubscription) {
+  if (state.sidebarSubscription) {
+    state.sidebarConnected = true;
     return;
   }
 
+  if (!stateSubject) {
+    state.sidebarConnected = false;
+    return;
+  }
+
+  state.sidebarConnected = true;
   state.sidebarWorkspaceId = sidebarApi?.getSnapshot?.().activeWorkspaceId || context.app.dataset.activeWorkspaceId || "";
   state.sidebarSubscription = stateSubject.subscribe((snapshot: SidebarSnapshot): void => {
     const nextWorkspaceId: string = snapshot.activeWorkspaceId || "";
@@ -123,6 +140,14 @@ function bindSidebarBridge(context: PluginContext, state: FileBrowserState, pane
     state.query = "";
     void refresh(context, state, panel);
   });
+}
+
+function activeWorkspaceId(context: PluginContext, state: FileBrowserState): string {
+  if (state.sidebarConnected) {
+    return state.sidebarWorkspaceId || context.app.dataset.activeWorkspaceId || "";
+  }
+
+  return context.app.dataset.activeWorkspaceId || "";
 }
 
 function ensureToolbarButton(app: AppElement, onToggle: () => void): FileBrowserButton | undefined {
@@ -414,8 +439,8 @@ function actionButton(action, label, title) {
   return button;
 }
 
-async function refresh(context, state, panel, selectedPath = "") {
-  const workspaceId = context.app.dataset.activeWorkspaceId;
+async function refresh(context: PluginContext, state: FileBrowserState, panel: HTMLElement, selectedPath = ""): Promise<void> {
+  const workspaceId: string = activeWorkspaceId(context, state);
   if (!workspaceId) {
     setTree(panel, [emptyNode("open a workspace first")]);
     return;
@@ -572,7 +597,7 @@ function handleAction(context, state, panel, target) {
   if (action === "open") {
     state.selectedPath = path;
     renderTree(panel, state);
-    void openEditor(context, path);
+    void openEditor(context, state, path);
     return undefined;
   }
   if (action === "root-menu") return showActionMenu(context, state, panel, target, { path: "", kind: "root" });
@@ -585,8 +610,8 @@ function handleAction(context, state, panel, target) {
   return undefined;
 }
 
-async function openEditor(context, path) {
-  const workspaceId = context.app.dataset.activeWorkspaceId;
+async function openEditor(context: PluginContext, state: FileBrowserState, path: string): Promise<void> {
+  const workspaceId: string = activeWorkspaceId(context, state);
   if (!workspaceId || !path) return;
   const editor = ensureEditor(context.app);
   editor.fileBrowserContext = context;
@@ -760,7 +785,7 @@ function menuButton(action, label, parent = "", path = "", className = "") {
 }
 
 async function createFile(context, state, panel, parent = "") {
-  const workspaceId = context.app.dataset.activeWorkspaceId;
+  const workspaceId = activeWorkspaceId(context, state);
   const path = window.prompt("New file path", joinPath(parent, "untitled.txt"));
   if (!workspaceId || !path) return;
   await context.backend("create", { workspaceId, data: { path, content: "" } });
@@ -768,7 +793,7 @@ async function createFile(context, state, panel, parent = "") {
 }
 
 async function createFolder(context, state, panel, parent = "") {
-  const workspaceId = context.app.dataset.activeWorkspaceId;
+  const workspaceId = activeWorkspaceId(context, state);
   const path = window.prompt("New folder path", joinPath(parent, "untitled"));
   if (!workspaceId || !path) return;
   await context.backend("create-folder", { workspaceId, data: { path } });
@@ -777,7 +802,7 @@ async function createFolder(context, state, panel, parent = "") {
 }
 
 async function uploadFile(context, state, panel, parent = "") {
-  const workspaceId = context.app.dataset.activeWorkspaceId;
+  const workspaceId = activeWorkspaceId(context, state);
   if (!workspaceId) return;
   const input = document.createElement("input");
   input.type = "file";
@@ -793,7 +818,7 @@ async function uploadFile(context, state, panel, parent = "") {
 }
 
 async function renamePath(context, state, panel, path) {
-  const workspaceId = context.app.dataset.activeWorkspaceId;
+  const workspaceId = activeWorkspaceId(context, state);
   const next = window.prompt("Rename path", path);
   if (!workspaceId || !path || !next || next === path) return;
   await context.backend("rename", { workspaceId, data: { path, newPath: next } });
@@ -801,7 +826,7 @@ async function renamePath(context, state, panel, path) {
 }
 
 async function deletePath(context, state, panel, path) {
-  const workspaceId = context.app.dataset.activeWorkspaceId;
+  const workspaceId = activeWorkspaceId(context, state);
   if (!workspaceId || !path || !window.confirm(`Delete ${path}?`)) return;
   await context.backend("delete", { workspaceId, data: { path } });
   await refresh(context, state, panel);
