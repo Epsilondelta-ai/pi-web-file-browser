@@ -1,50 +1,187 @@
-import { CodeMirrorFileEditor } from "./file-editor.js";
+import { CodeMirrorFileEditor } from "./file-editor";
+import type { FilePreview } from "./file-editor";
 
 const PANEL_ID = "file-browser";
 
-export default function activate(context) {
+export type SubscriptionLike = { closed?: boolean; unsubscribe(): void };
+export type SubjectLike<T> = { subscribe(callback: (value: T) => void): SubscriptionLike };
+export type SidebarSnapshot = { activeWorkspaceId: string };
+export type SidebarApi = { state$?: SubjectLike<SidebarSnapshot> };
+type BackendResult = { files?: FileNode[]; statusMap?: Record<string, string> };
+export type PluginContext = {
+  app: AppElement;
+  backend(method: string, input: { workspaceId?: string; data?: Record<string, unknown> }): Promise<BackendResult & FilePreview>;
+  files?: { read(workspaceId: string, path: string): Promise<FilePreview> };
+};
+export type AppElement = HTMLElement & {
+  fileBrowserOutsideCloseBound?: boolean;
+  fileBrowserSidebarTopBound?: boolean;
+  piWebSidebar?: SidebarApi;
+  workspaceFiles?: FileNode[];
+  workspaceFileStatuses?: Record<string, string>;
+};
+type FileBrowserButton = HTMLButtonElement & { fileBrowserOnToggle?: () => void; fileBrowserToggleBound?: boolean };
+export type FileBrowserState = {
+  files: FileNode[];
+  statusMap: Record<string, string>;
+  expanded: Set<string>;
+  collapsed: Set<string>;
+  selectedPath: string;
+  query: string;
+  sidebarConnected: boolean;
+  sidebarStateSubject?: SubjectLike<SidebarSnapshot>;
+  sidebarSubscription?: SubscriptionLike;
+  sidebarWorkspaceId: string;
+};
+type FileNode = { name?: string; path?: string; type?: string; children?: FileNode[] };
+type FileEditorModal = HTMLDivElement & {
+  fileBrowserContext?: PluginContext;
+  fileEditor?: CodeMirrorFileEditor;
+};
+type ActionItem = { path: string; kind?: string };
+type MaterialIconName = string;
+
+export default function activate(context: PluginContext): () => void {
   const panel = ensurePanel(context.app);
-  const state = { files: [], statusMap: {}, expanded: new Set(), collapsed: new Set(), selectedPath: "", query: "" };
+  const state: FileBrowserState = createFileBrowserState();
   ensureToolbarButton(context.app, () => {
     const isOpen = toggleFileBrowserSidebar(context.app);
     syncToolbarButton(context.app);
-    if (isOpen) refresh(context, state, panel);
+
+    if (isOpen) {
+      bindSidebarBridge(context, state, panel);
+      refresh(context, state, panel);
+    }
   });
   ensureOutsideClose(context.app);
 
-  panel.addEventListener("click", (event) => {
-    const source = event.target?.nodeType === 1 ? event.target : event.target?.parentElement;
-    const target = source?.closest?.("[data-file-browser-action]");
+  panel.addEventListener("click", (event: MouseEvent): void => {
+    const source: Element | null = event.target instanceof Element ? event.target : null;
+    const target: HTMLElement | null = source?.closest<HTMLElement>("[data-file-browser-action]") || null;
     if (!target || !panel.contains(target)) return;
     event.preventDefault();
     handleAction(context, state, panel, target);
   });
 
-  panel.querySelector("[data-file-browser-search]").addEventListener("input", (event) => {
-    state.query = event.currentTarget.value.trim().toLowerCase();
+  panel.querySelector<HTMLInputElement>("[data-file-browser-search]")?.addEventListener("input", (event: Event): void => {
+    const input: HTMLInputElement = event.currentTarget as HTMLInputElement;
+    state.query = input.value.trim().toLowerCase();
     renderTree(panel, state);
   });
 
-  window.addEventListener("pi-workspace:active", () => refresh(context, state, panel));
-  window.addEventListener("pi-workspace-tree:refresh", (event) => refresh(context, state, panel, event.detail?.selectedPath || ""));
-  window.addEventListener("pi-workspace-file:open", (event) => {
-    const path = event.detail?.path || "";
+  const refreshActiveWorkspace = (): void => {
+    const bridgeChanged: boolean = bindSidebarBridge(context, state, panel);
+
+    if (bridgeChanged || !state.sidebarConnected) {
+      void refresh(context, state, panel);
+    }
+  };
+  const refreshTree = (event: Event): void => {
+    const detail = (event as CustomEvent<{ selectedPath?: string }>).detail;
+    void refresh(context, state, panel, detail?.selectedPath || "");
+  };
+  const openWorkspaceFile = (event: Event): void => {
+    const detail = (event as CustomEvent<{ path?: string }>).detail;
+    const path = detail?.path || "";
     if (!path) return;
     state.selectedPath = path;
     renderTree(panel, state);
-    void openEditor(context, path);
-  });
+    void openEditor(context, state, path);
+  };
+  window.addEventListener("pi-workspace:active", refreshActiveWorkspace);
+  window.addEventListener("pi-workspace-tree:refresh", refreshTree);
+  window.addEventListener("pi-workspace-file:open", openWorkspaceFile);
+  bindSidebarBridge(context, state, panel);
 
   syncToolbarButton(context.app);
-  refresh(context, state, panel);
+  void refresh(context, state, panel);
+
+  return (): void => {
+    state.sidebarSubscription?.unsubscribe();
+    window.removeEventListener("pi-workspace:active", refreshActiveWorkspace);
+    window.removeEventListener("pi-workspace-tree:refresh", refreshTree);
+    window.removeEventListener("pi-workspace-file:open", openWorkspaceFile);
+  };
 }
 
-function ensureToolbarButton(app, onToggle) {
+export function createFileBrowserState(): FileBrowserState {
+  return {
+    files: [],
+    statusMap: {},
+    expanded: new Set<string>(),
+    collapsed: new Set<string>(),
+    selectedPath: "",
+    query: "",
+    sidebarConnected: false,
+    sidebarWorkspaceId: "",
+  };
+}
+
+export function bindSidebarBridge(context: PluginContext, state: FileBrowserState, panel: HTMLElement): boolean {
+  const sidebarApi: SidebarApi | undefined = context.app.piWebSidebar;
+  const stateSubject: SubjectLike<SidebarSnapshot> | undefined = sidebarApi?.state$;
+  const previousConnected: boolean = state.sidebarConnected;
+  const previousSubject: SubjectLike<SidebarSnapshot> | undefined = state.sidebarStateSubject;
+  const previousSubscriptionClosed: boolean = !!state.sidebarSubscription?.closed;
+  const previousWorkspaceId: string = state.sidebarWorkspaceId;
+  if (state.sidebarSubscription && !state.sidebarSubscription.closed && previousSubject === stateSubject) {
+    state.sidebarConnected = true;
+    return false;
+  }
+
+  state.sidebarSubscription?.unsubscribe();
+  state.sidebarSubscription = undefined;
+  state.sidebarStateSubject = undefined;
+
+  if (!stateSubject) {
+    state.sidebarConnected = false;
+    state.sidebarWorkspaceId = "";
+    return previousConnected || !!previousWorkspaceId;
+  }
+
+  state.sidebarConnected = true;
+  state.sidebarStateSubject = stateSubject;
+  state.sidebarWorkspaceId = "";
+  let initializing = true;
+  state.sidebarSubscription = stateSubject.subscribe((snapshot: SidebarSnapshot): void => {
+    const nextWorkspaceId: string = snapshot.activeWorkspaceId || "";
+
+    if (nextWorkspaceId === state.sidebarWorkspaceId) {
+      return;
+    }
+
+    state.sidebarWorkspaceId = nextWorkspaceId;
+    state.selectedPath = "";
+    state.query = "";
+
+    if (!initializing) {
+      void refresh(context, state, panel);
+    }
+  });
+  initializing = false;
+
+  return (
+    !previousConnected ||
+    previousSubject !== stateSubject ||
+    previousSubscriptionClosed ||
+    previousWorkspaceId !== state.sidebarWorkspaceId
+  );
+}
+
+export function activeWorkspaceId(context: PluginContext, state: FileBrowserState): string {
+  if (state.sidebarConnected) {
+    return state.sidebarWorkspaceId;
+  }
+
+  return context.app.dataset.activeWorkspaceId || "";
+}
+
+function ensureToolbarButton(app: AppElement, onToggle: () => void): FileBrowserButton | undefined {
   const toolbar = app.querySelector("[data-plugin-toolbar]") || app.querySelector(".topbar .actions");
   if (!toolbar) return undefined;
-  let button = toolbar.querySelector(`[data-plugin-toolbar-button="${PANEL_ID}"]`);
+  let button: FileBrowserButton | null = toolbar.querySelector<FileBrowserButton>(`[data-plugin-toolbar-button="${PANEL_ID}"]`);
   if (!button) {
-    button = document.createElement("button");
+    button = document.createElement("button") as FileBrowserButton;
     button.type = "button";
     button.className = "iconbtn workspace-explorer-btn";
     button.dataset.pluginToolbarButton = PANEL_ID;
@@ -65,7 +202,7 @@ function ensureToolbarButton(app, onToggle) {
   return button;
 }
 
-function materialThemeIcon(name, size = 16) {
+function materialThemeIcon(name: MaterialIconName, size = 16): HTMLImageElement {
   const img = document.createElement("img");
   img.alt = "";
   img.width = size;
@@ -74,12 +211,12 @@ function materialThemeIcon(name, size = 16) {
   return img;
 }
 
-function materialIconDataUrl(name) {
+function materialIconDataUrl(name: MaterialIconName): string {
   const svg = materialIconSvg(name);
   return `data:image/svg+xml,${encodeURIComponent(svg)}`;
 }
 
-function materialIconSvg(name) {
+function materialIconSvg(name: MaterialIconName): string {
   const color = materialIconColor(name);
   const label = materialIconLabel(name);
   const folderPath =
@@ -91,7 +228,7 @@ function materialIconSvg(name) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">${shape}<text x="9" y="13" text-anchor="middle" font-family="Arial, sans-serif" font-size="5" font-weight="700" fill="rgba(255,255,255,.92)">${label}</text></svg>`;
 }
 
-function materialIconColor(name) {
+function materialIconColor(name: MaterialIconName): string {
   return {
     astro: "#ff5d01",
     css: "#42a5f5",
@@ -115,7 +252,7 @@ function materialIconColor(name) {
   }[name] || "#90a4ae";
 }
 
-function materialIconLabel(name) {
+function materialIconLabel(name: MaterialIconName): string {
   return {
     astro: "A",
     css: "CSS",
@@ -139,44 +276,45 @@ function materialIconLabel(name) {
   }[name] || "";
 }
 
-function syncToolbarButton(app) {
-  const button = app.querySelector(`[data-plugin-toolbar-button="${PANEL_ID}"]`);
-  const sidebar = app.querySelector("[data-file-browser-sidebar]");
+function syncToolbarButton(app: AppElement): void {
+  const button = app.querySelector<HTMLElement>(`[data-plugin-toolbar-button="${PANEL_ID}"]`);
+  const sidebar = app.querySelector<HTMLElement>("[data-file-browser-sidebar]");
   button?.classList.toggle("on", sidebar?.dataset.open === "true");
 }
 
-function toggleFileBrowserSidebar(app) {
+function toggleFileBrowserSidebar(app: AppElement): boolean {
   const sidebar = ensureSidebar(app);
   const isOpen = sidebar.dataset.open !== "true";
   setFileBrowserSidebarOpen(app, isOpen);
   return isOpen;
 }
 
-function setFileBrowserSidebarOpen(app, isOpen) {
+function setFileBrowserSidebarOpen(app: AppElement, isOpen: boolean): void {
   const sidebar = ensureSidebar(app);
   sidebar.dataset.open = String(isOpen);
   sidebar.setAttribute("aria-hidden", String(!isOpen));
 }
 
-function ensureOutsideClose(app) {
+function ensureOutsideClose(app: AppElement): void {
   if (app.fileBrowserOutsideCloseBound) return;
-  document.addEventListener("pointerdown", (event) => {
-    const sidebar = app.querySelector("[data-file-browser-sidebar]");
+  document.addEventListener("pointerdown", (event: PointerEvent): void => {
+    const sidebar = app.querySelector<HTMLElement>("[data-file-browser-sidebar]");
     if (sidebar?.dataset.open !== "true") return;
-    const target = event.target;
-    if (target.closest?.("[data-file-browser-sidebar]")) return;
-    if (target.closest?.(".pi-file-browser-menu")) return;
-    if (target.closest?.("[data-file-editor-modal]")) return;
-    if (target.closest?.(`[data-plugin-toolbar-button="${PANEL_ID}"]`)) return;
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target) return;
+    if (target.closest("[data-file-browser-sidebar]")) return;
+    if (target.closest(".pi-file-browser-menu")) return;
+    if (target.closest("[data-file-editor-modal]")) return;
+    if (target.closest(`[data-plugin-toolbar-button="${PANEL_ID}"]`)) return;
     setFileBrowserSidebarOpen(app, false);
     syncToolbarButton(app);
   });
   app.fileBrowserOutsideCloseBound = true;
 }
 
-function ensurePanel(app) {
+function ensurePanel(app: AppElement): HTMLElement {
   const sidebar = ensureSidebar(app);
-  let panel = sidebar.querySelector(`[data-plugin-panel="${PANEL_ID}"]`);
+  let panel: HTMLElement | null = sidebar.querySelector<HTMLElement>(`[data-plugin-panel="${PANEL_ID}"]`);
   if (panel) return panel;
 
   panel = document.createElement("section");
@@ -187,8 +325,8 @@ function ensurePanel(app) {
   return panel;
 }
 
-function ensureStyle(app) {
-  let style = document.querySelector(`[data-file-browser-style="${PANEL_ID}"]`);
+function ensureStyle(app: AppElement): HTMLStyleElement {
+  let style: HTMLStyleElement | null = document.querySelector<HTMLStyleElement>(`[data-file-browser-style="${PANEL_ID}"]`);
   if (style) return style;
 
   style = createStyle();
@@ -197,10 +335,10 @@ function ensureStyle(app) {
   return style;
 }
 
-function ensureSidebar(app) {
+function ensureSidebar(app: AppElement): HTMLElement {
   ensureStyle(app);
 
-  let sidebar = app.querySelector("[data-file-browser-sidebar]");
+  let sidebar: HTMLElement | null = app.querySelector<HTMLElement>("[data-file-browser-sidebar]");
   if (sidebar) {
     syncSidebarTop(app, sidebar);
     return sidebar;
@@ -224,14 +362,17 @@ function ensureSidebar(app) {
   return sidebar;
 }
 
-function syncSidebarTop(app, sidebar = app.querySelector("[data-file-browser-sidebar]")) {
+function syncSidebarTop(
+  app: AppElement,
+  sidebar: HTMLElement | null = app.querySelector<HTMLElement>("[data-file-browser-sidebar]"),
+): void {
   if (!sidebar) return;
-  const topbar = app.querySelector(".topbar") || document.querySelector(".topbar");
+  const topbar: HTMLElement | null = app.querySelector<HTMLElement>(".topbar") || document.querySelector<HTMLElement>(".topbar");
   const top = topbar ? Math.max(0, topbar.getBoundingClientRect().bottom) : 0;
   sidebar.style.setProperty("--file-browser-sidebar-top", `${top}px`);
 }
 
-function createStyle() {
+function createStyle(): HTMLStyleElement {
   const style = document.createElement("style");
   style.textContent = [
     ".pi-file-browser-sidebar { position: fixed; top: var(--file-browser-sidebar-top, 48px); right: 0; bottom: 0; z-index: 70; width: min(360px, calc(100vw - 48px)); display: flex; flex-direction: column; background: var(--bg-2); border-left: 1px solid var(--border); box-shadow: -18px 0 50px rgba(0,0,0,.35); transform: translateX(100%); pointer-events: none; }",
@@ -324,9 +465,14 @@ function actionButton(action, label, title) {
   return button;
 }
 
-async function refresh(context, state, panel, selectedPath = "") {
-  const workspaceId = context.app.dataset.activeWorkspaceId;
+async function refresh(context: PluginContext, state: FileBrowserState, panel: HTMLElement, selectedPath = ""): Promise<void> {
+  const workspaceId: string = activeWorkspaceId(context, state);
   if (!workspaceId) {
+    state.files = [];
+    state.statusMap = {};
+    state.selectedPath = "";
+    context.app.workspaceFiles = state.files;
+    context.app.workspaceFileStatuses = state.statusMap;
     setTree(panel, [emptyNode("open a workspace first")]);
     return;
   }
@@ -482,7 +628,7 @@ function handleAction(context, state, panel, target) {
   if (action === "open") {
     state.selectedPath = path;
     renderTree(panel, state);
-    void openEditor(context, path);
+    void openEditor(context, state, path);
     return undefined;
   }
   if (action === "root-menu") return showActionMenu(context, state, panel, target, { path: "", kind: "root" });
@@ -495,8 +641,8 @@ function handleAction(context, state, panel, target) {
   return undefined;
 }
 
-async function openEditor(context, path) {
-  const workspaceId = context.app.dataset.activeWorkspaceId;
+async function openEditor(context: PluginContext, state: FileBrowserState, path: string): Promise<void> {
+  const workspaceId: string = activeWorkspaceId(context, state);
   if (!workspaceId || !path) return;
   const editor = ensureEditor(context.app);
   editor.fileBrowserContext = context;
@@ -642,9 +788,9 @@ function showActionMenu(context, state, panel, target, item) {
   if (item.kind !== "root") {
     menu.append(menuButton("rename", "rename", "", item.path), menuButton("delete", "delete", "", item.path, "danger"));
   }
-  menu.addEventListener("click", (event) => {
-    const source = event.target?.nodeType === 1 ? event.target : event.target?.parentElement;
-    const actionTarget = source?.closest?.("[data-file-browser-action]");
+  menu.addEventListener("click", (event: MouseEvent): void => {
+    const source: Element | null = event.target instanceof Element ? event.target : null;
+    const actionTarget: HTMLElement | null = source?.closest<HTMLElement>("[data-file-browser-action]") || null;
     if (!actionTarget || !menu.contains(actionTarget)) return;
     event.preventDefault();
     event.stopPropagation();
@@ -670,7 +816,7 @@ function menuButton(action, label, parent = "", path = "", className = "") {
 }
 
 async function createFile(context, state, panel, parent = "") {
-  const workspaceId = context.app.dataset.activeWorkspaceId;
+  const workspaceId = activeWorkspaceId(context, state);
   const path = window.prompt("New file path", joinPath(parent, "untitled.txt"));
   if (!workspaceId || !path) return;
   await context.backend("create", { workspaceId, data: { path, content: "" } });
@@ -678,7 +824,7 @@ async function createFile(context, state, panel, parent = "") {
 }
 
 async function createFolder(context, state, panel, parent = "") {
-  const workspaceId = context.app.dataset.activeWorkspaceId;
+  const workspaceId = activeWorkspaceId(context, state);
   const path = window.prompt("New folder path", joinPath(parent, "untitled"));
   if (!workspaceId || !path) return;
   await context.backend("create-folder", { workspaceId, data: { path } });
@@ -687,7 +833,7 @@ async function createFolder(context, state, panel, parent = "") {
 }
 
 async function uploadFile(context, state, panel, parent = "") {
-  const workspaceId = context.app.dataset.activeWorkspaceId;
+  const workspaceId = activeWorkspaceId(context, state);
   if (!workspaceId) return;
   const input = document.createElement("input");
   input.type = "file";
@@ -703,7 +849,7 @@ async function uploadFile(context, state, panel, parent = "") {
 }
 
 async function renamePath(context, state, panel, path) {
-  const workspaceId = context.app.dataset.activeWorkspaceId;
+  const workspaceId = activeWorkspaceId(context, state);
   const next = window.prompt("Rename path", path);
   if (!workspaceId || !path || !next || next === path) return;
   await context.backend("rename", { workspaceId, data: { path, newPath: next } });
@@ -711,7 +857,7 @@ async function renamePath(context, state, panel, path) {
 }
 
 async function deletePath(context, state, panel, path) {
-  const workspaceId = context.app.dataset.activeWorkspaceId;
+  const workspaceId = activeWorkspaceId(context, state);
   if (!workspaceId || !path || !window.confirm(`Delete ${path}?`)) return;
   await context.backend("delete", { workspaceId, data: { path } });
   await refresh(context, state, panel);
