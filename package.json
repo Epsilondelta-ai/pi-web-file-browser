@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "bun build src/index.js --outfile index.js --target browser --format esm --sourcemap=none"
+    "build": "bun build src/index.js --outfile index.js --target browser --format esm --sourcemap=none --minify"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.3",

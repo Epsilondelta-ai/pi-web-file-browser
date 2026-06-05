@@ -501,15 +501,23 @@ async function openEditor(context, path) {
   save.disabled = true;
   editor.hidden = false;
   try {
-    const file = await context.backend("read", { workspaceId, data: { path } });
+    const file = await readFileForEditor(context, workspaceId, path);
     if (editor.dataset.workspaceId !== workspaceId || editor.dataset.path !== path) return;
     editor.dataset.cleanContent = file.content || "";
     await mountCodeMirrorEditor(context, editor, file);
     save.disabled = true;
-    status.textContent = `${file.mime || "text/plain"} · ${file.size || 0} bytes`;
+    status.textContent = `${file.mime || "text/plain"} · ${file.size || 0} bytes${file.truncated ? " · preview only" : ""}`;
   } catch (error) {
     status.textContent = error.message || "file unavailable";
   }
+}
+
+async function readFileForEditor(context, workspaceId, path) {
+  if (context.files?.read) {
+    const file = await context.files.read(workspaceId, path);
+    return { ...file, size: file.size ?? (file.content || "").length, readOnly: !!file.truncated };
+  }
+  return context.backend("read", { workspaceId, data: { path } });
 }
 
 function ensureEditor(app) {
@@ -564,6 +572,7 @@ async function mountCodeMirrorEditor(context, editor, file) {
     file,
     content: file.content || "",
     originalContent: file.originalContent || file.content || "",
+    readOnly: !!file.readOnly,
     onChange(content) {
       save.disabled = content === editor.dataset.cleanContent;
     },

@@ -1,8 +1,9 @@
-import { chmodSync, existsSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
+const MAX_INLINE_CONTENT_BYTES = 700 * 1024;
 const dir = dirname(fileURLToPath(import.meta.url));
 const binary = resolveBinary();
 
@@ -34,6 +35,18 @@ if (method === "create-folder") {
   }
 }
 
+if (method === "read") {
+  try {
+    const data = JSON.parse(input || "{}");
+    const file = readWorkspaceFile(root, data.path);
+    process.stdout.write(JSON.stringify(file));
+    process.exit(0);
+  } catch (error) {
+    process.stderr.write(error.message || "failed to read file");
+    process.exit(1);
+  }
+}
+
 const run = spawnSync(binary, process.argv.slice(2), {
   encoding: "utf8",
   input,
@@ -61,10 +74,47 @@ async function readBackendInput() {
   return normalizeBackendInput(raw);
 }
 
+function readWorkspaceFile(root, rel) {
+  const clean = normalizeRelPath(rel);
+  const path = safeWorkspacePath(root, clean);
+  const size = statSync(path).size;
+  const truncated = size > MAX_INLINE_CONTENT_BYTES;
+  const bytes = readFileSync(path).subarray(0, truncated ? MAX_INLINE_CONTENT_BYTES : undefined);
+  const suffix = truncated
+    ? `\n\n--- File preview truncated at ${MAX_INLINE_CONTENT_BYTES} bytes. Save is disabled. ---\n`
+    : "";
+  return {
+    path: clean,
+    content: `${bytes.toString("utf8")}${suffix}`,
+    size,
+    mime: mimeType(clean),
+    truncated,
+    readOnly: truncated,
+  };
+}
+
 function safeWorkspacePath(root, rel) {
   if (!root) throw new Error("workspace root is required");
   const clean = normalizeRelPath(rel);
   return join(root, clean);
+}
+
+function mimeType(path) {
+  return {
+    ".css": "text/css",
+    ".go": "text/x-go",
+    ".html": "text/html",
+    ".js": "text/javascript",
+    ".json": "application/json",
+    ".jsx": "text/javascript",
+    ".md": "text/markdown",
+    ".sh": "text/x-shellscript",
+    ".ts": "text/typescript",
+    ".tsx": "text/typescript",
+    ".txt": "text/plain",
+    ".yaml": "application/x-yaml",
+    ".yml": "application/x-yaml",
+  }[extname(path).toLowerCase()] || "text/plain";
 }
 
 function normalizeRelPath(rel) {
