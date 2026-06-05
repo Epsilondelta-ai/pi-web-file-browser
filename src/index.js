@@ -182,12 +182,24 @@ function ensurePanel(app) {
   panel = document.createElement("section");
   panel.dataset.pluginPanel = PANEL_ID;
   panel.className = "pi-file-browser-panel";
-  panel.append(createStyle(), createHeader(), createBody());
+  panel.append(createHeader(), createBody());
   sidebar.append(panel);
   return panel;
 }
 
+function ensureStyle(app) {
+  let style = document.querySelector(`[data-file-browser-style="${PANEL_ID}"]`);
+  if (style) return style;
+
+  style = createStyle();
+  style.dataset.fileBrowserStyle = PANEL_ID;
+  (document.head || app).append(style);
+  return style;
+}
+
 function ensureSidebar(app) {
+  ensureStyle(app);
+
   let sidebar = app.querySelector("[data-file-browser-sidebar]");
   if (sidebar) {
     syncSidebarTop(app, sidebar);
