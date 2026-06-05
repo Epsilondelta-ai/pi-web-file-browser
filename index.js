@@ -23990,8 +23990,66 @@ function materialThemeIcon(name2, size = 16) {
   img.alt = "";
   img.width = size;
   img.height = size;
-  img.src = `/node_modules/material-icon-theme/icons/${name2}.svg`;
+  img.src = materialIconDataUrl(name2);
   return img;
+}
+function materialIconDataUrl(name2) {
+  const svg = materialIconSvg(name2);
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
+function materialIconSvg(name2) {
+  const color = materialIconColor(name2);
+  const label = materialIconLabel(name2);
+  const folderPath = "M2.5 6.5c0-1.1.9-2 2-2h4l1.6 1.8h5.4c1.1 0 2 .9 2 2v7c0 1.1-.9 2-2 2h-11c-1.1 0-2-.9-2-2z";
+  const filePath = "M5 2.5h7l3 3v12h-10z";
+  const shape = name2.startsWith("folder") ? `<path fill="${color}" d="${folderPath}"/>` : `<path fill="${color}" d="${filePath}"/><path fill="rgba(255,255,255,.35)" d="M12 2.5v3h3z"/>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">${shape}<text x="9" y="13" text-anchor="middle" font-family="Arial, sans-serif" font-size="5" font-weight="700" fill="rgba(255,255,255,.92)">${label}</text></svg>`;
+}
+function materialIconColor(name2) {
+  return {
+    astro: "#ff5d01",
+    css: "#42a5f5",
+    file: "#90a4ae",
+    folder: "#f4b400",
+    "folder-open": "#f6c34a",
+    go: "#00add8",
+    html: "#e44d26",
+    javascript: "#f7df1e",
+    json: "#8bc34a",
+    markdown: "#607d8b",
+    nodejs: "#68a063",
+    react: "#61dafb",
+    react_ts: "#61dafb",
+    readme: "#42a5f5",
+    svg: "#ffb13b",
+    tsconfig: "#3178c6",
+    typescript: "#3178c6",
+    vite: "#646cff",
+    yaml: "#cb171e"
+  }[name2] || "#90a4ae";
+}
+function materialIconLabel(name2) {
+  return {
+    astro: "A",
+    css: "CSS",
+    file: "",
+    folder: "",
+    "folder-open": "",
+    go: "GO",
+    html: "&lt;&gt;",
+    javascript: "JS",
+    json: "{}",
+    markdown: "MD",
+    nodejs: "N",
+    react: "R",
+    react_ts: "TSX",
+    readme: "i",
+    svg: "SVG",
+    tsconfig: "TS",
+    typescript: "TS",
+    vite: "V",
+    yaml: "YML"
+  }[name2] || "";
 }
 function syncToolbarButton(app) {
   const button = app.querySelector(`[data-plugin-toolbar-button="${PANEL_ID}"]`);
@@ -24246,7 +24304,7 @@ function materialIcon(node, isDir, expanded) {
   const fallback = isDir ? "\uD83D\uDCC1" : "•";
   const img = document.createElement("img");
   img.alt = "";
-  img.src = `/node_modules/material-icon-theme/icons/${materialIconName(node, isDir, expanded)}.svg`;
+  img.src = materialIconDataUrl(materialIconName(node, isDir, expanded));
   img.addEventListener("error", () => {
     img.replaceWith(document.createTextNode(fallback));
   }, { once: true });
